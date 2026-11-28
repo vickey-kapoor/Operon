@@ -1,5 +1,5 @@
 # PR gate (KAN-216, KAN-227): label every PR low-risk, risky or needs-vickey, and merge the low-risk and risky ones that are
-# fully reviewed (risky also needs a Fable 5.2 top-review marker). A needs-vickey PR is never merged here: Vickey merges it.
+# fully reviewed (verifier check run from the operon-verifier app; risky also needs its top-review check run, KAN-260). A needs-vickey PR is never merged here: Vickey merges it.
 #
 # All decisions live in scripts/pr_gate.py (offline tested). The merge step only runs when the repo
 # variable OPERON_AUTO_MERGE is "on". Unset (the default) is trial mode: label, plus one "would merge"

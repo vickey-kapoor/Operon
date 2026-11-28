@@ -264,7 +264,7 @@ Do not commit, push, merge, or create a pull request unless the user has authori
 
 Exception, merging (owner's rule, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit
 approval"): the full rule is the "Merging" part of the Dev workflow section in `CLAUDE.md`; follow it exactly. In short:
-a PR merges once checks are green, Codex is answered and the fresh verifier marker is on the head; a `risky` PR also
+a PR merges once checks are green, Codex is answered and the `operon-verifier` app's "Operon verifier" check run passes on the head; a `risky` PR also
 needs a top-model review (today Fable 5.2) in a fresh session that is not the coordinator and did not write or verify
 it; a PR touching a GitHub workflow or action file, the paid-run machinery or the merge check (`evals/**` except JSON
 recordings, `scripts/**`, price tables, model defaults and ids, model clients, settings; the exact list is in

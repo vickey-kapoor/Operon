@@ -9,6 +9,7 @@ Stdlib only. Fail closed: anything unknown, missing or odd means "risky" / "not 
     python scripts/pr_gate.py paused --issues issues.json
 
 ``classify`` prints ``low-risk``, ``risky`` or ``needs-vickey`` on stdout (needs-vickey beats risky beats low-risk; agent definitions are read with ``--repo`` and ``--ref``, else they need Vickey); ``merge-ready`` prints ``ready`` or ``not-ready``; ``paused`` prints ``paused`` or ``running`` (KAN-229).
+A ready PR also needs the "Operon verifier" check run (and "Operon top review" when risky) from the ``operon-verifier`` GitHub App on the head commit (KAN-260; see docs/verifier-app.md): a comment can no longer stand in for it.
 The reasons go to stderr and, when set, to ``$GITHUB_STEP_SUMMARY``.
 """
 
@@ -135,6 +136,7 @@ PAID_RUN_PATTERNS: tuple[str, ...] = (
     # .claude/ and .mcp.json are not listed here: see is_claude_gated (plain agent definitions are risky, the rest waits).
     "scripts/pr_gate.py",
     "tests/ci/test_pr_gate.py",
+    "docs/verifier-app.md",  # the keyed verifier session's procedure (KAN-260)
     # Everything under evals/ (bench, batch queue, OSWorld, grounding, live smoke, caps, suites, seasons, runners'
     # scripts), except recorded data (PAID_RUN_EXEMPT).
     "evals/**",
@@ -180,11 +182,16 @@ REQUIRED_CHECKS: tuple[str, ...] = (
 # KAN-229: while an open issue carries this label, the gate merges nothing and posts no would-merge notes.
 PAUSE_LABEL = "auto-work-paused"
 
-OWNER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+# KAN-260: the verifier's pass is a check run posted by a separate GitHub App, not a comment the coding account
+# could post itself. VERIFIER_APP_SLUG is the slug of the GitHub App Vickey creates (see docs/verifier-app.md);
+# changing it needs Vickey. Only the verifier-only session holds that app's key.
+VERIFIER_APP_SLUG = "operon-verifier"
+# The numeric App ID is pinned too: a slug alone could be squatted by another app, an ID cannot.
+VERIFIER_APP_ID = 5966259
+VERIFIER_CHECK = "Operon verifier"
+TOP_REVIEW_CHECK = "Operon top review"
 CODEX_BOT = "chatgpt-codex-connector[bot]"
 GOOD_CONCLUSIONS = frozenset({"success", "skipped", "neutral"})
-VERIFIER_RE = re.compile(r"<!--\s*operon-verifier:\s*PASS\s+([0-9a-fA-F]{40})\s*-->")
-TOP_REVIEW_RE = re.compile(r"<!--\s*operon-top-review:\s*PASS\s+([0-9a-fA-F]{40})\s*-->")
 
 
 @dataclass(frozen=True)
@@ -428,7 +435,7 @@ def classify(
         names = [(f.filename, f.status)] + ([(f.previous_filename, "removed")] if f.previous_filename else [])
         for name, status in names:
             if is_plain_agent_path(name) and name.replace("\\", "/").casefold().endswith("/verifier.md"):
-                paid.append(f"needs Vickey's merge (the verifier's PASS is a merge marker): {name}")
+                paid.append(f"needs Vickey's merge (the verifier posts the pass check, so its definition is a merge input): {name}")
             if is_paid_run_path(name):
                 paid.append(f"needs Vickey's merge (paid-run or merge-check file): {name}")
             if is_risky_path(name, status):
@@ -477,6 +484,42 @@ def is_fork_pr(pr: dict[str, Any]) -> bool:
     return head_repo is None or head_repo != base_repo
 
 
+def _is_verifier_app_id(app_id: object) -> bool:
+    """True only for the int App ID (a string, bool, None or other id never matches)."""
+    return type(app_id) is int and app_id == VERIFIER_APP_ID
+
+
+def _review_check_problems(checks: list[dict[str, Any]], head: str, name: str) -> list[str]:
+    """Reasons the head has no passing ``name`` check run from the verifier app (empty when it has one).
+
+    Only runs with this name, from ``VERIFIER_APP_SLUG`` and ``VERIFIER_APP_ID`` (an int; anything else never
+    counts), for exactly ``head`` (case-insensitive) count. The
+    newest of them (highest id, then latest completed_at) must be completed with conclusion ``success``.
+    """
+    mine = [
+        c
+        for c in checks
+        if c.get("name") == name
+        and (c.get("app") or {}).get("slug") == VERIFIER_APP_SLUG
+        and _is_verifier_app_id((c.get("app") or {}).get("id"))
+        and isinstance(c.get("head_sha"), str)
+        and c["head_sha"].lower() == head.lower()
+    ]
+    if not mine:
+        return [f"no {name!r} check run from the {VERIFIER_APP_SLUG} app on the head commit"]
+
+    def age(c: dict[str, Any]) -> tuple[int, str]:
+        cid = c.get("id")
+        return (cid if isinstance(cid, int) else -1, str(c.get("completed_at") or ""))
+
+    newest = max(mine, key=age)
+    if newest.get("status") != "completed":
+        return [f"{name!r} check is not completed"]
+    if newest.get("conclusion") != "success":
+        return [f"{name!r} check is {newest.get('conclusion')}"]
+    return []
+
+
 def merge_ready(
     pr: dict[str, Any],
     checks: list[dict[str, Any]],
@@ -490,8 +533,12 @@ def merge_ready(
     ``status`` the head's combined status (the older status API, which check runs do not cover).
 
     ``risk`` is a fresh classification of the PR's files. A fork PR and a ``needs-vickey`` PR are never ready. A
-    ``risky`` PR (labelled risky, classified risky) also needs a top-review marker for the head from an owner or
-    collaborator, in a comment of its own (one that does not also carry the verifier marker).
+    ``risky`` PR (labelled risky, classified risky) also needs a top-review check run.
+
+    Every PR needs a completed, successful "Operon verifier" check run for the head commit from the
+    ``operon-verifier`` GitHub App (KAN-260); if several such runs exist the newest decides. A run with that name
+    from any other app, or for another commit, never counts. A failed or running run of any name still blocks (the
+    loop over all relevant runs below), so another app can block a PR but cannot make one ready.
     """
     why: list[str] = []
     head = (pr.get("head") or {}).get("sha") or ""
@@ -552,21 +599,9 @@ def merge_ready(
         if state.get("has_unresolved_findings") is not False:
             why.append("Codex review has unresolved findings")
 
-    def marked(regex: re.Pattern[str], alone: bool = False) -> bool:
-        """A comment from an owner or collaborator carries ``regex``'s marker for the head; with ``alone``,
-        the comment must not also carry a verifier marker (the top review is posted in its own comment)."""
-        return any(
-            c.get("author_association") in OWNER_ASSOCIATIONS
-            and (c.get("user") or {}).get("type") == "User"
-            and any(m.lower() == head.lower() for m in regex.findall(c.get("body") or ""))
-            and not (alone and VERIFIER_RE.search(c.get("body") or ""))
-            for c in comments
-        )
-
-    if not marked(VERIFIER_RE):
-        why.append("no verifier PASS marker for the head commit from an owner or collaborator")
-    if level == RISKY and not marked(TOP_REVIEW_RE, alone=True):
-        why.append("no top-review PASS marker for the head commit from an owner or collaborator")
+    why.extend(_review_check_problems(checks, head, VERIFIER_CHECK))
+    if level == RISKY:
+        why.extend(_review_check_problems(checks, head, TOP_REVIEW_CHECK))
 
     return (not why), why or ["all gates passed"]
 

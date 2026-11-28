@@ -198,18 +198,25 @@ def _codex(sha: str = HEAD, status: str = "completed", unresolved: bool = False)
     }
 
 
-def _marker(sha: str = HEAD, assoc: str = "OWNER", kind: str = "User") -> dict[str, Any]:
-    return {
-        "user": {"login": "someone", "type": kind},
-        "author_association": assoc,
-        "body": f"<!-- operon-verifier: PASS {sha} -->",
+def _run(name: str, sha: str = HEAD, **over: Any) -> dict[str, Any]:
+    """A check run from the verifier app by default."""
+    run: dict[str, Any] = {
+        "id": 100,
+        "name": name,
+        "head_sha": sha,
+        "status": "completed",
+        "conclusion": "success",
+        "app": {"slug": gate.VERIFIER_APP_SLUG, "id": gate.VERIFIER_APP_ID},
     }
+    run.update(over)
+    return run
 
 
 ACTIONS = {"slug": "github-actions"}
-GOOD_CHECKS = [
+BASE_CHECKS = [
     {"name": n, "status": "completed", "conclusion": "success", "app": ACTIONS} for n in gate.REQUIRED_CHECKS
 ]
+GOOD_CHECKS = [*BASE_CHECKS, _run(gate.VERIFIER_CHECK)]
 GOOD_STATUS = {"state": "pending", "statuses": []}  # no statuses at all
 
 
@@ -217,7 +224,7 @@ def _ready(**kw: Any) -> tuple[bool, list[str]]:
     return gate.merge_ready(
         kw.get("pr", _pr()),
         kw.get("checks", GOOD_CHECKS),
-        kw.get("comments", [_codex(), _marker()]),
+        kw.get("comments", [_codex()]),
         kw.get("ignore", ()),
         risk=kw.get("risk", "low-risk"),
         status=kw.get("status", GOOD_STATUS),
@@ -239,10 +246,10 @@ def test_skipped_and_neutral_checks_count_as_good() -> None:
 @pytest.mark.parametrize(
     ("kw", "reason"),
     [
-        ({"comments": [_codex(sha=OLD), _marker()]}, "another commit"),
-        ({"comments": [_codex(unresolved=True), _marker()]}, "unresolved"),
-        ({"comments": [_codex(status="in_progress"), _marker()]}, "status"),
-        ({"comments": [_marker()]}, "no Codex"),
+        ({"comments": [_codex(sha=OLD)]}, "another commit"),
+        ({"comments": [_codex(unresolved=True)]}, "unresolved"),
+        ({"comments": [_codex(status="in_progress")]}, "status"),
+        ({"comments": []}, "no Codex"),
         ({"checks": GOOD_CHECKS + [{"name": "X", "status": "in_progress", "conclusion": None}]}, "still running"),
         ({"checks": GOOD_CHECKS + [{"name": "X", "status": "completed", "conclusion": "failure"}]}, "failure"),
         ({"checks": []}, "no check runs"),
@@ -252,11 +259,6 @@ def test_skipped_and_neutral_checks_count_as_good() -> None:
         ({"status": {"state": "pending", "statuses": [{"state": "pending"}]}}, "combined status"),
         ({"status": {"state": "failure", "statuses": [{"state": "failure"}]}}, "combined status"),
         ({"status": None}, "combined status not read"),
-        ({"comments": [_codex(), _marker(kind="Bot")]}, "verifier"),
-        ({"comments": [_codex()]}, "verifier"),
-        ({"comments": [_codex(), _marker(assoc="NONE")]}, "verifier"),
-        ({"comments": [_codex(), _marker(assoc="CONTRIBUTOR")]}, "verifier"),
-        ({"comments": [_codex(), _marker(sha=OLD)]}, "verifier"),
         ({"pr": _pr(draft=True)}, "draft"),
         ({"pr": _pr(labels=[{"name": "risky"}])}, "does not match the label"),
         ({"pr": _pr(labels=[{"name": "low-risk"}, {"name": "risky"}])}, "labelled"),
@@ -300,11 +302,11 @@ def _real_codex() -> dict[str, Any]:
 
 def test_real_codex_comment_ready_when_sha_matches() -> None:
     pr = _pr(head={"sha": REAL_SHA, "repo": {"full_name": "o/r"}})
-    assert _ready(pr=pr, comments=[_real_codex(), _marker(sha=REAL_SHA)]) == (True, ["all gates passed"])
+    assert _ready(pr=pr, checks=[*BASE_CHECKS, _run(gate.VERIFIER_CHECK, sha=REAL_SHA)], comments=[_real_codex()]) == (True, ["all gates passed"])
 
 
 def test_real_codex_comment_stale_sha_is_not_ready() -> None:
-    ok, why = _ready(comments=[_real_codex(), _marker()])
+    ok, why = _ready(comments=[_real_codex()])
     assert not ok
     assert any("another commit" in w for w in why), why
 
@@ -312,53 +314,160 @@ def test_real_codex_comment_stale_sha_is_not_ready() -> None:
 def test_codex_state_from_another_author_is_ignored() -> None:
     fake = _codex()
     fake["user"] = {"login": "attacker"}
-    assert not _ready(comments=[fake, _marker()])[0]
-
-
-def _top(sha: str = HEAD, assoc: str = "OWNER", kind: str = "User", body: str = "") -> dict[str, Any]:
-    return {
-        "user": {"login": "someone", "type": kind},
-        "author_association": assoc,
-        "body": f"Top review verdict: PASS\n<!-- operon-top-review: PASS {sha} -->{body}",
-    }
+    assert not _ready(comments=[fake])[0]
 
 
 RISKY_PR = _pr(labels=[{"name": "risky"}])
+TOP_CHECKS = [*GOOD_CHECKS, _run(gate.TOP_REVIEW_CHECK, id=101)]
 
 
-def test_risky_with_verifier_marker_but_no_top_review_is_not_ready() -> None:
-    ok, why = _ready(pr=RISKY_PR, risk="risky", comments=[_codex(), _marker()])
+def _risky(checks: list[dict[str, Any]]) -> tuple[bool, list[str]]:
+    return _ready(pr=RISKY_PR, risk="risky", checks=checks)
+
+
+def _bad(result: tuple[bool, list[str]], reason: str) -> None:
+    ok, why = result
     assert not ok
-    assert any("top-review" in w for w in why), why
+    assert any(reason in w for w in why), why
 
 
-def test_risky_with_top_review_for_the_head_is_ready() -> None:
-    assert _ready(pr=RISKY_PR, risk="risky", comments=[_codex(), _marker(), _top()]) == (True, ["all gates passed"])
+def test_an_old_marker_comment_alone_no_longer_makes_anything_ready() -> None:
+    marker = {
+        "user": {"login": "someone", "type": "User"},
+        "author_association": "OWNER",
+        "body": f"<!-- operon-verifier: PASS {HEAD} -->",
+    }
+    _bad(_ready(checks=BASE_CHECKS, comments=[_codex(), marker]), "no 'Operon verifier' check run")
+
+
+def test_the_verifier_app_check_run_passes() -> None:
+    assert _ready(checks=[*BASE_CHECKS, _run(gate.VERIFIER_CHECK, head_sha=HEAD.upper())]) == (True, ["all gates passed"])
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        _run(gate.VERIFIER_CHECK, app={"slug": "github-actions"}),
+        _run(gate.VERIFIER_CHECK, app={"slug": "some-other-app"}),
+        _run(gate.VERIFIER_CHECK, app=None),
+        _run(gate.VERIFIER_CHECK, app={}),
+        _run(gate.VERIFIER_CHECK, app={"slug": gate.VERIFIER_APP_SLUG.upper()}),
+        _run(gate.VERIFIER_CHECK, app={"slug": gate.VERIFIER_APP_SLUG, "id": 1}),
+        _run(gate.VERIFIER_CHECK, app={"slug": gate.VERIFIER_APP_SLUG}),
+        _run(gate.VERIFIER_CHECK, app={"slug": gate.VERIFIER_APP_SLUG, "id": None}),
+        _run(gate.VERIFIER_CHECK, app={"slug": gate.VERIFIER_APP_SLUG, "id": str(gate.VERIFIER_APP_ID)}),
+        _run(gate.VERIFIER_CHECK, sha=OLD),
+        _run(gate.VERIFIER_CHECK, head_sha=None),
+        _run(gate.VERIFIER_CHECK, head_sha=""),
+        _run("Operon verifier (copy)"),
+    ],
+    ids=["actions", "other-app", "no-app", "empty-app", "slug-case", "wrong-id", "no-id", "null-id", "string-id", "old-head", "null-head", "empty-head", "other-name"],
+)
+def test_a_verifier_run_that_does_not_count_is_not_ready(run: dict[str, Any]) -> None:
+    _bad(_ready(checks=[*BASE_CHECKS, run]), "no 'Operon verifier' check run from the operon-verifier app")
+
+
+def test_a_verifier_run_without_a_head_sha_key_does_not_count() -> None:
+    run = _run(gate.VERIFIER_CHECK)
+    del run["head_sha"]
+    _bad(_ready(checks=[*BASE_CHECKS, run]), "no 'Operon verifier' check run")
+
+
+def test_no_verifier_run_at_all_is_not_ready() -> None:
+    _bad(_ready(checks=BASE_CHECKS), "no 'Operon verifier' check run")
+
+
+@pytest.mark.parametrize(
+    ("over", "reason"),
+    [
+        ({"conclusion": "failure"}, "check is failure"),
+        ({"conclusion": "cancelled"}, "check is cancelled"),
+        ({"conclusion": "neutral"}, "check is neutral"),
+        ({"conclusion": "skipped"}, "check is skipped"),
+        ({"conclusion": None}, "check is None"),
+        ({"status": "in_progress", "conclusion": None}, "still running"),
+        ({"status": "queued", "conclusion": None}, "still running"),
+    ],
+)
+def test_a_verifier_run_that_is_not_a_success_is_not_ready(over: dict[str, Any], reason: str) -> None:
+    _bad(_ready(checks=[*BASE_CHECKS, _run(gate.VERIFIER_CHECK, **over)]), reason)
+
+
+def test_a_success_from_another_app_does_not_hide_the_missing_verifier() -> None:
+    other = _run(gate.VERIFIER_CHECK, app={"slug": "github-actions"})
+    _bad(_ready(checks=[*BASE_CHECKS, other]), "from the operon-verifier app")
+
+
+def test_another_app_can_block_but_not_make_a_pr_ready() -> None:
+    fake = _run(gate.VERIFIER_CHECK, id=999, app={"slug": "evil"}, conclusion="failure")
+    ok, why = _ready(checks=[*GOOD_CHECKS, fake])
+    assert not ok and any("failure: Operon verifier" in w for w in why), why  # blocks, as any bad run does
+
+
+def test_the_newest_verifier_run_wins_a_later_failure_blocks() -> None:
+    old = _run(gate.VERIFIER_CHECK, id=1)
+    new = _run(gate.VERIFIER_CHECK, id=2, conclusion="failure")
+    _bad(_ready(checks=[*BASE_CHECKS, old, new]), "check is failure")
+    _bad(_ready(checks=[*BASE_CHECKS, new, old]), "check is failure")  # the order of the list does not matter
+
+
+def test_an_older_failure_still_blocks_even_when_a_newer_success_exists() -> None:
+    """Documented: the loop over all relevant runs fails the PR on any bad run, so with both runs listed the PR is blocked.
+    (GitHub's default listing returns only the newest run per name, so in practice a re-post replaces it.)
+    The newest-run rule is satisfied here; the generic loop is what blocks."""
+    old = _run(gate.VERIFIER_CHECK, id=1, conclusion="failure")
+    new = _run(gate.VERIFIER_CHECK, id=2)
+    ok, why = _ready(checks=[*BASE_CHECKS, old, new])
+    assert not ok
+    assert why == ["check failure: Operon verifier"], why
+
+
+def test_newest_run_is_picked_by_completed_at_when_ids_tie() -> None:
+    old = _run(gate.VERIFIER_CHECK, completed_at="2026-01-01T00:00:00Z", conclusion="failure")
+    new = _run(gate.VERIFIER_CHECK, completed_at="2026-01-02T00:00:00Z")
+    ok, why = _ready(checks=[*BASE_CHECKS, new, old])
+    assert why == ["check failure: Operon verifier"], why  # only the generic loop objects, not the newest-run rule
+
+
+def test_risky_needs_the_top_review_run_too() -> None:
+    _bad(_risky(GOOD_CHECKS), "no 'Operon top review' check run from the operon-verifier app")
+    assert _risky(TOP_CHECKS) == (True, ["all gates passed"])
+
+
+def test_low_risk_does_not_need_the_top_review_run() -> None:
+    assert _ready(checks=GOOD_CHECKS)[0]
 
 
 @pytest.mark.parametrize(
     "top",
     [
-        _top(sha=OLD),
-        _top(kind="Bot"),
-        _top(assoc="NONE"),
-        _top(assoc="CONTRIBUTOR"),
+        _run(gate.TOP_REVIEW_CHECK, sha=OLD),
+        _run(gate.TOP_REVIEW_CHECK, head_sha=None),
+        _run(gate.TOP_REVIEW_CHECK, app={"slug": "github-actions"}),
+        _run(gate.TOP_REVIEW_CHECK, app=None),
     ],
-    ids=["old-sha", "bot", "non-collaborator", "contributor"],
+    ids=["old-head", "no-head", "actions", "no-app"],
 )
-def test_risky_with_a_bad_top_review_is_not_ready(top: dict[str, Any]) -> None:
-    ok, why = _ready(pr=RISKY_PR, risk="risky", comments=[_codex(), _marker(), top])
-    assert not ok
-    assert any("top-review" in w for w in why), why
+def test_risky_with_a_top_review_that_does_not_count_is_not_ready(top: dict[str, Any]) -> None:
+    _bad(_risky([*GOOD_CHECKS, top]), "no 'Operon top review' check run")
 
 
-def test_top_review_in_the_verifier_comment_does_not_count() -> None:
-    both = _top(body=f"\n<!-- operon-verifier: PASS {HEAD} -->")
-    ok, why = _ready(pr=RISKY_PR, risk="risky", comments=[_codex(), both])
-    assert not ok
-    assert any("top-review" in w for w in why), why
-    assert not any("verifier PASS" in w for w in why), why  # it still counts as the verifier marker
-    assert _ready(pr=RISKY_PR, risk="risky", comments=[_codex(), both, _top()])[0]
+@pytest.mark.parametrize("over", [{"conclusion": "failure"}, {"status": "in_progress", "conclusion": None}])
+def test_risky_with_a_top_review_that_is_not_a_success_is_not_ready(over: dict[str, Any]) -> None:
+    assert not _risky([*GOOD_CHECKS, _run(gate.TOP_REVIEW_CHECK, **over)])[0]
+
+
+def test_a_verifier_run_does_not_stand_in_for_the_top_review() -> None:
+    _bad(_risky([*GOOD_CHECKS, _run(gate.VERIFIER_CHECK, id=5)]), "no 'Operon top review'")
+
+
+def test_a_top_review_run_does_not_stand_in_for_the_verifier() -> None:
+    _bad(_risky([*BASE_CHECKS, _run(gate.TOP_REVIEW_CHECK)]), "no 'Operon verifier'")
+
+
+def test_the_gate_no_longer_reads_markers() -> None:
+    assert not hasattr(gate, "VERIFIER_RE") and not hasattr(gate, "TOP_REVIEW_RE")
+    assert not hasattr(gate, "OWNER_ASSOCIATIONS")
 
 
 @pytest.mark.parametrize(
@@ -371,9 +480,8 @@ def test_top_review_in_the_verifier_comment_does_not_count() -> None:
         ([{"name": "risky"}], "needs-vickey"),
     ],
 )
-def test_needs_vickey_is_never_ready_even_with_every_marker(labels: list[dict[str, str]], risk: str) -> None:
-    comments = [_codex(), _marker(), _top()]
-    ok, why = _ready(pr=_pr(labels=labels), risk=risk, comments=comments)
+def test_needs_vickey_is_never_ready_even_with_every_check(labels: list[dict[str, str]], risk: str) -> None:
+    ok, why = _ready(pr=_pr(labels=labels), risk=risk, checks=TOP_CHECKS, comments=[_codex()])
     assert not ok
     assert any("needs Vickey" in w for w in why), why
 
@@ -388,14 +496,14 @@ def test_needs_vickey_is_never_ready_even_with_every_marker(labels: list[dict[st
     ids=["other-repo", "deleted-repo", "no-repo"],
 )
 def test_a_fork_pr_is_never_ready(head: dict[str, Any]) -> None:
-    ok, why = _ready(pr=_pr(head=head), comments=[_codex(), _marker(), _top()])
+    ok, why = _ready(pr=_pr(head=head), comments=[_codex()])
     assert not ok
     assert why == ["PR is from a fork"]
 
 
 def test_merge_ready_requires_a_risk() -> None:
     with pytest.raises(TypeError):
-        gate.merge_ready(_pr(), GOOD_CHECKS, [_codex(), _marker()], status=GOOD_STATUS)  # type: ignore[call-arg]
+        gate.merge_ready(_pr(), GOOD_CHECKS, [_codex()], status=GOOD_STATUS)  # type: ignore[call-arg]
 
 
 def test_cli_low_risk_label_with_a_workflow_file_is_not_ready(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -404,7 +512,7 @@ def test_cli_low_risk_label_with_a_workflow_file_is_not_ready(tmp_path: Path, ca
     paths["pr"].write_text(json.dumps(_pr()))
     paths["files"].write_text(json.dumps([{"filename": "docs/a.md"}, {"filename": ".github/workflows/x.yml", "status": "added"}]))
     paths["checks"].write_text(json.dumps({"check_runs": GOOD_CHECKS}))
-    paths["comments"].write_text(json.dumps([_codex(), _marker(), _top()]))
+    paths["comments"].write_text(json.dumps([_codex()]))
     paths["status"].write_text(json.dumps(GOOD_STATUS))
     args = ["merge-ready"] + [x for n, f in paths.items() for x in (f"--{n}", str(f))]
     assert gate.main(args) == 0
@@ -419,7 +527,7 @@ def test_cli_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     pr, checks, comments = (tmp_path / n for n in ("pr.json", "checks.json", "comments.json"))
     pr.write_text(json.dumps(_pr()))
     checks.write_text(json.dumps({"check_runs": GOOD_CHECKS}))
-    comments.write_text(json.dumps([_codex(), _marker()]))
+    comments.write_text(json.dumps([_codex()]))
     assert gate.main(["classify", "--files", str(files)]) == 0
     assert capsys.readouterr().out.strip() == "low-risk"
     status = tmp_path / "status.json"
@@ -428,7 +536,7 @@ def test_cli_end_to_end(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     args += ["--status", str(status)]
     assert gate.main([*args, "--comments", str(comments)]) == 0
     assert capsys.readouterr().out.strip() == "ready"
-    comments.write_text(json.dumps([_codex()]))
+    checks.write_text(json.dumps({"check_runs": BASE_CHECKS}))  # no verifier check run
     gate.main([*args, "--comments", str(comments)])
     assert capsys.readouterr().out.strip() == "not-ready"
 
@@ -472,6 +580,7 @@ def test_every_paid_run_pattern_matches_a_real_file(pattern: str) -> None:
         "src/operon/api/runtime_config/__init__.py",
         "src/operon/api/runtime/services/__init__.py",
         "src/operon/agent/backends/model_adapter/registry/__init__.py",
+        "docs/verifier-app.md",
     ],
 )
 def test_kan_230_paths_are_paid_run(path: str) -> None:
@@ -971,7 +1080,7 @@ def test_label_step_drops_a_stale_paid_run_label() -> None:
 
 @pytest.mark.parametrize("risk", ["low-risk", "risky"])
 def test_a_stale_paid_run_label_still_blocks_a_merge(risk: str) -> None:
-    ok, why = _ready(pr=_pr(labels=[{"name": risk}, {"name": "paid-run"}]), risk=risk, comments=[_codex(), _marker(), _top()])
+    ok, why = _ready(pr=_pr(labels=[{"name": risk}, {"name": "paid-run"}]), risk=risk, checks=TOP_CHECKS, comments=[_codex()])
     assert not ok and any("needs Vickey" in w for w in why), why
 
 

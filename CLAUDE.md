@@ -233,7 +233,9 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
 - **No paid run without Vickey's explicit OK for that run and its cost:** no `/bench` comment, no manual start of
   `benchmark.yml`, `grounding.yml` or `osworld-bench.yml`, no local run with a real model key, and no PR whose own CI
   would use a model key. Approval is per PR and per run: an earlier "merge", a "yes" to another question, a green check,
-  a clean Codex review or a reviewer PASS do not count.
+  a clean Codex review or a reviewer PASS do not count. Every paid job runs in the `paid-runs` environment and waits for
+  Vickey's Approve in GitHub (KAN-282); an agent never approves a waiting `paid-runs` run (no pending_deployments call, no
+  bypass), even with her OK for the run.
 - Marker comments come from the same account that opens PRs, so they are only as trustworthy as the review behind them.
   Gate merges use `GITHUB_TOKEN`, so push-triggered CI on `main` does not run for them.
 

@@ -186,6 +186,8 @@ PAUSE_LABEL = "auto-work-paused"
 # could post itself. VERIFIER_APP_SLUG is the slug of the GitHub App Vickey creates (see docs/verifier-app.md);
 # changing it needs Vickey. Only the verifier-only session holds that app's key.
 VERIFIER_APP_SLUG = "operon-verifier"
+# The numeric App ID is pinned too: a slug alone could be squatted by another app, an ID cannot.
+VERIFIER_APP_ID = 5966259
 VERIFIER_CHECK = "Operon verifier"
 TOP_REVIEW_CHECK = "Operon top review"
 CODEX_BOT = "chatgpt-codex-connector[bot]"
@@ -482,10 +484,16 @@ def is_fork_pr(pr: dict[str, Any]) -> bool:
     return head_repo is None or head_repo != base_repo
 
 
+def _is_verifier_app_id(app_id: object) -> bool:
+    """True only for the int App ID (a string, bool, None or other id never matches)."""
+    return type(app_id) is int and app_id == VERIFIER_APP_ID
+
+
 def _review_check_problems(checks: list[dict[str, Any]], head: str, name: str) -> list[str]:
     """Reasons the head has no passing ``name`` check run from the verifier app (empty when it has one).
 
-    Only runs with this name, from ``VERIFIER_APP_SLUG``, for exactly ``head`` (case-insensitive) count. The
+    Only runs with this name, from ``VERIFIER_APP_SLUG`` and ``VERIFIER_APP_ID`` (an int; anything else never
+    counts), for exactly ``head`` (case-insensitive) count. The
     newest of them (highest id, then latest completed_at) must be completed with conclusion ``success``.
     """
     mine = [
@@ -493,6 +501,7 @@ def _review_check_problems(checks: list[dict[str, Any]], head: str, name: str) -
         for c in checks
         if c.get("name") == name
         and (c.get("app") or {}).get("slug") == VERIFIER_APP_SLUG
+        and _is_verifier_app_id((c.get("app") or {}).get("id"))
         and isinstance(c.get("head_sha"), str)
         and c["head_sha"].lower() == head.lower()
     ]

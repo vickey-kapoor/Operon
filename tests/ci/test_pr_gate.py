@@ -206,7 +206,7 @@ def _run(name: str, sha: str = HEAD, **over: Any) -> dict[str, Any]:
         "head_sha": sha,
         "status": "completed",
         "conclusion": "success",
-        "app": {"slug": gate.VERIFIER_APP_SLUG},
+        "app": {"slug": gate.VERIFIER_APP_SLUG, "id": gate.VERIFIER_APP_ID},
     }
     run.update(over)
     return run
@@ -352,12 +352,16 @@ def test_the_verifier_app_check_run_passes() -> None:
         _run(gate.VERIFIER_CHECK, app=None),
         _run(gate.VERIFIER_CHECK, app={}),
         _run(gate.VERIFIER_CHECK, app={"slug": gate.VERIFIER_APP_SLUG.upper()}),
+        _run(gate.VERIFIER_CHECK, app={"slug": gate.VERIFIER_APP_SLUG, "id": 1}),
+        _run(gate.VERIFIER_CHECK, app={"slug": gate.VERIFIER_APP_SLUG}),
+        _run(gate.VERIFIER_CHECK, app={"slug": gate.VERIFIER_APP_SLUG, "id": None}),
+        _run(gate.VERIFIER_CHECK, app={"slug": gate.VERIFIER_APP_SLUG, "id": str(gate.VERIFIER_APP_ID)}),
         _run(gate.VERIFIER_CHECK, sha=OLD),
         _run(gate.VERIFIER_CHECK, head_sha=None),
         _run(gate.VERIFIER_CHECK, head_sha=""),
         _run("Operon verifier (copy)"),
     ],
-    ids=["actions", "other-app", "no-app", "empty-app", "slug-case", "old-head", "null-head", "empty-head", "other-name"],
+    ids=["actions", "other-app", "no-app", "empty-app", "slug-case", "wrong-id", "no-id", "null-id", "string-id", "old-head", "null-head", "empty-head", "other-name"],
 )
 def test_a_verifier_run_that_does_not_count_is_not_ready(run: dict[str, Any]) -> None:
     _bad(_ready(checks=[*BASE_CHECKS, run]), "no 'Operon verifier' check run from the operon-verifier app")

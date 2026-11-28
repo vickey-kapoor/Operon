@@ -1182,7 +1182,7 @@ def test_sweep_notes_a_missing_real_check_once_per_head_and_never_merges_it() ->
     assert "operon-gate-real-check: $sha" in branch
     assert "github-actions[bot]" in branch and "contains($m)" in branch  # dedupe on the bot and the head sha
     assert "--body-file" in branch and "gh pr comment" in branch
-    assert "put it on its own top-level line, before any code block, quote or HTML" in branch
+    assert "before the first code block, quote or HTML in the description. Put it on its own top-level line near the top." in branch
     assert branch.index('"$(pause_state)"') < branch.index("gh pr comment")
     assert "gh pr merge" not in branch and "--add-label" not in branch
     assert "\n    continue\n" in branch
@@ -1260,3 +1260,21 @@ def test_real_check_stops_at_any_unmatched_code_span() -> None:
     assert gate.has_real_check(f"Uses ``a`b`` here\n{line}")  # a matched double-backtick span holding a backtick
     assert gate.has_real_check(f"Uses `code` and ```x``` spans\n{line}")
     assert gate.has_real_check(f"Fixes `has_real_check`: see `tests/ci/test_pr_gate.py`.\n\n{line} showed X")
+
+
+def test_real_check_reads_code_spans_as_text_not_html() -> None:
+    line = f"Real check: {RC_LINK}"
+    assert gate.has_real_check(f"Uses `<path>` and `<action>`\n{line}")
+    assert gate.has_real_check(f"Code span `<pre>` and `<!-- x` (no close)\n{line}")
+    assert gate.has_real_check(f"Real check: {RC_LINK} showed `Step N: <action>`")
+    assert gate.has_real_check(f"A `<!-- not a comment` here\n{line}")  # a span's <!-- opens no comment
+    assert gate.has_real_check(f"``a <b> `c` ``\n{line}")
+    assert not gate.has_real_check(f"<?\n{line}\n?>")  # a processing instruction
+    assert not gate.has_real_check(f"<!DOCTYPE x>\n{line}")
+    assert not gate.has_real_check(f"<![CDATA[\n{line}")
+    assert not gate.has_real_check(f"Uses <path> raw\n{line}")  # outside a span it is a tag
+    assert not gate.has_real_check(f"`<pre>` then <pre>\n{line}")
+    assert not gate.has_real_check(f"<!-- c --> <details>\n{line}")  # a comment does not hide a tag after it
+    assert gate.has_real_check(f"<!-- c `unmatched -->\n{line}")  # backticks inside a comment are skipped
+    assert not gate.has_real_check(f"Real check: <!-- {RC_LINK} -->")  # the link must be outside comments
+

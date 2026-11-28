@@ -489,51 +489,71 @@ _LINK_RE = re.compile(r"https?://\S")
 _LINE_BREAK_RE = re.compile(r"\r\n|\r|\n")  # not str.splitlines(): it also splits on \x0b, \x0c, \x85, U+2028 ...
 
 
-def _strip_comments(line: str, in_comment: bool) -> tuple[str, bool]:
-    """``line`` without HTML comment text, and whether a comment is still open at its end (it may span lines)."""
-    out = ""
-    while True:
-        if in_comment:
-            end = line.find("-->")
-            if end < 0:
-                return out, True
-            line, in_comment = line[end + 3 :], False
-        else:
-            start = line.find("<!--")
-            if start < 0:
-                return out + line, False
-            out, line, in_comment = out + line[:start], line[start + 4 :], True
-
-
-# Other places the scan stops (outside HTML comments): a raw HTML tag (an autolink such as <https://x> is fine) and a
-# blockquote (after spaces and list markers), which can swallow a following line.
-_HTML_TAG_RE = re.compile(r"<(?:/|(?![A-Za-z][A-Za-z0-9+.-]{1,31}:)[A-Za-z])")
+# The scan also stops at a blockquote (after spaces and list markers), which can swallow a following line.
 _QUOTE_START_RE = re.compile(r"^(?:[ \t]|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t]))*>")
+_AUTOLINK_RE = re.compile(r"<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>")
+_TAG_OPENER_RE = re.compile(r"<[/?!A-Za-z]")  # raw HTML tag, closing tag, processing instruction, declaration, CDATA
 
 
-def _has_unmatched_code_span(line: str) -> bool:
-    """CommonMark run matching on one line: a backtick run of length n is closed by the next run of exactly n;
-    runs of other lengths between them are literal. True if any run is left unmatched."""
-    runs = [len(m.group()) for m in re.finditer(r"`+", line)]
+def _scan_line(line: str, in_comment: bool) -> tuple[str, bool, bool]:
+    """One line, left to right: ``(visible text, comment still open at the end, stop)``.
+
+    Inside a comment, text is skipped up to ``-->``. Outside, a backtick run of length n starts a code span that the next
+    run of exactly n on the line closes; its text is literal (kept in the visible text, never checked for comments or
+    tags), and a run with no partner means stop. ``<!--`` starts a comment. A raw HTML tag, ``</``, ``<?`` or any other
+    ``<!`` means stop; an autolink such as ``<https://x>`` is plain text.
+    """
+    out: list[str] = []
     i = 0
-    while i < len(runs):
-        j = next((k for k in range(i + 1, len(runs)) if runs[k] == runs[i]), None)
-        if j is None:
-            return True
-        i = j + 1
-    return False
+    n = len(line)
+    while i < n:
+        if in_comment:
+            end = line.find("-->", i)
+            if end < 0:
+                break
+            i, in_comment = end + 3, False
+            continue
+        c = line[i]
+        if c == "`":
+            run = re.compile(r"`+").match(line, i)
+            assert run is not None
+            size = run.end() - i
+            close = next((m for m in re.finditer(r"`+", line[run.end() :]) if len(m.group()) == size), None)
+            if close is None:
+                return "".join(out), in_comment, True
+            stop_at = run.end() + close.end()
+            out.append(line[i:stop_at])
+            i = stop_at
+        elif line.startswith("<!--", i):
+            in_comment = True
+            i += 4
+        elif c == "<":
+            auto = _AUTOLINK_RE.match(line, i)
+            if auto:
+                out.append(auto.group())
+                i = auto.end()
+            elif _TAG_OPENER_RE.match(line, i):
+                return "".join(out), in_comment, True
+            else:
+                out.append(c)
+                i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out), in_comment, False
 
 
 def has_real_check(body: str | None) -> bool:
     """Whether a PR description has a "Real check:" line with a link on the same line (KAN-298).
 
     The line must be a top-level line (column 0, no quote, at most one list marker and one heading mark before the
-    words), must match as written (a comment before the words does not count), and must come before any code block,
-    quote or HTML. Fail closed by construction: lines are split on CR, LF or CRLF only, HTML comments (may span lines,
-    an unclosed one runs to the end) never count, and the scan stops, so that line and everything after it cannot
-    count, at the first line that is fence-like (``` or ~~~ after any spaces, quote marks and list markers, even inside
-    a comment) or, outside comments, has a raw HTML tag, starts with a quote mark, or leaves a backtick run unmatched
-    (CommonMark run matching on the line). This is not a Markdown parser.
+    words), must match as written (a comment before the words does not count, and the link must be outside comments),
+    and must come before any code block, quote or HTML. Fail closed by construction: lines are split on CR, LF or CRLF
+    only, HTML comments (may span lines, an unclosed one runs to the end) never count, and the scan stops, so that line
+    and everything after it cannot count, at the first line that is fence-like (``` or ~~~ after any spaces, quote
+    marks and list markers, even inside a comment) or, outside comments and code spans (``_scan_line``), has a raw HTML
+    tag, ``<?`` or ``<!`` (other than a comment), starts with a quote mark, or leaves a backtick run unmatched. Text
+    inside a matched code span is literal. This is not a Markdown parser.
     """
     if not isinstance(body, str):
         return False
@@ -541,8 +561,8 @@ def has_real_check(body: str | None) -> bool:
     for raw in _LINE_BREAK_RE.split(body):
         if _FENCE_LIKE_RE.match(raw):
             return False
-        line, in_comment = _strip_comments(raw, in_comment)
-        if _FENCE_LIKE_RE.match(line) or _HTML_TAG_RE.search(line) or _QUOTE_START_RE.match(line) or _has_unmatched_code_span(line):
+        line, in_comment, stop = _scan_line(raw, in_comment)
+        if stop or _FENCE_LIKE_RE.match(line) or _QUOTE_START_RE.match(line):
             return False
         m_raw = _REAL_CHECK_LINE_RE.match(raw)
         m = _REAL_CHECK_LINE_RE.match(line)

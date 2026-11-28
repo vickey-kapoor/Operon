@@ -11,7 +11,8 @@
 # Needs repo secret RUNNER_ADMIN_TOKEN (fine-grained token, this repo only, Administration read+write: it mints and deletes
 # the one-job runner) and the repo variables GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT (Terraform outputs of infra/gcp).
 # The model keys GEMINI_API_KEY, ANTHROPIC_API_KEY and OPENAI_API_KEY are secrets of the `paid-runs` environment (KAN-282):
-# start-vm and bench each wait for Vickey's Approve, so a run needs two Approve clicks.
+# start-vm and bench each wait for Vickey's Approve, so a run needs two Approve clicks. After the first click the VM is up
+# and bills (about $0.20 an hour) until the second: press it right away, or Reject to stop the VM.
 # Cost: Gemini about $0.12 a task (the last full 25-task run was $3.11); Claude or GPT about $0.12-0.24 a task.
 # The VM (n2-standard-4 and its address) is about $0.20 an hour while a run is going; its 150 GB disk about $15 a month.
 # The cap is checked between tasks, so a run can overshoot by one task.
@@ -75,7 +76,8 @@ jobs:
     runs-on: ubuntu-latest
     # A VM's first start installs Docker and the runner before it takes the runner (RUNNER_ONLINE_TIMEOUT below).
     timeout-minutes: 25
-    # Waits for Vickey's Approve (KAN-282) before the VM, which costs per hour, is started.
+    # Waits for Vickey's Approve (KAN-282) before the VM, which costs per hour, is started. Once it is up, bench waits
+    # for a second Approve while the VM bills: approve it right away, or Reject to stop the VM.
     environment: paid-runs
     permissions:
       contents: read

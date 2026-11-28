@@ -6,7 +6,7 @@ repo `C:\Users\vicke\GitHub\Operon`). Work moved here from the claude.ai project
 architecture, invariants and the Opus/Haiku/Sonnet dev workflow; this file adds the
 standing rules, infrastructure and open items that live outside the code.
 
-Last updated: 2026-11-27. Contains no secrets: keys live in GitHub secrets (the model keys in the `paid-runs` environment),
+Last updated: 2026-11-28. Contains no secrets: keys live in GitHub secrets (the model keys in the `paid-runs` environment),
 `~/.operon` and Vickey's local `.env`.
 
 ## Standing rules (Vickey)

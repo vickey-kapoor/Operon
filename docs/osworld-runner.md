@@ -69,7 +69,10 @@ OSWorld app catalog. Report scores as run with those.
 
 4. The model keys `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are secrets of the `paid-runs`
    GitHub environment (KAN-282), not repo secrets. The jobs `start-vm` and `bench` both wait for Vickey's Approve
-   on that environment, so a run needs two Approve clicks: machine start, then tasks. A key reaches the run
+   on that environment, so a run needs two Approve clicks: machine start, then tasks. After the first click the
+   VM is up and its runner is registered, so the 20-minute idle power-off in `infra/gcp/startup.sh` does not fire:
+   it bills about $0.20 an hour until the second click (worst case the VM's 17 h `max_run_duration`, about $3.40).
+   Press the second Approve right away, or Reject to stop the VM. A key reaches the run
    as an environment variable of the job; it is not written to the VM's disk by the workflow.
    A `model` run uses `ANTHROPIC_API_KEY` (Claude) or `OPENAI_API_KEY` (GPT); each reaches
    only a run of that provider's model, never a Gemini or grounding run.
@@ -80,6 +83,18 @@ two Python environments (`~/osw-venv`, Python 3.11 with OSWorld's requirements, 
 
 The task VM OSWorld starts inside `operon-osworld` keeps OSWorld's default size (4 GB, 4 cores), so scores stay
 comparable with earlier runs. `operon-osworld` has 16 GB and an 8 GB swap file.
+
+### Paid-runs environment setup
+
+Done once in GitHub (Settings, Environments), by Vickey (KAN-282):
+
+1. Create the environment `paid-runs`.
+2. Required reviewers: Vickey.
+3. Untick "Allow administrators to bypass configured protection rules".
+4. Leave "Prevent self-review" off: agents start runs as her account, so it would lock her out.
+5. Deployment branches and tags: Selected branches and tags, `main` only.
+6. Add `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` as environment secrets.
+7. Then delete the three repo secrets: while they exist, any job without the environment can read them.
 
 ## When a run fails
 

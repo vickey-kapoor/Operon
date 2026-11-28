@@ -366,6 +366,9 @@ that the workflow starts before the run and deallocates after. Setup is in
 
 ## Repository secrets and variables
 
+The three model keys are not repo secrets: set up the `paid-runs` environment as described in
+[osworld-runner.md](osworld-runner.md#paid-runs-environment-setup).
+
 | Name | Kind | Used by |
 |---|---|---|
 | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | secrets of the `paid-runs` environment | Every model call. Every paid job waits for Vickey's Approve on that environment (KAN-282) |

@@ -5,6 +5,7 @@ Offline: the workflow files are parsed as YAML; nothing calls GitHub.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -13,13 +14,21 @@ import yaml
 
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github" / "workflows"
 KEYS = ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY")
-KEY_REF = re.compile(r"secrets\.(?:" + "|".join(KEYS) + r")\b")
-# No caller can start these two, and another story deletes them, so they are left out until then.
-UNGUARDED_FILES = {"live-bench.yml", "live-desktop-bench.yml"}
+_NAMES = "|".join(KEYS)
+# A read of a model key: secrets.NAME, secrets['NAME'], secrets["NAME"], or the whole secrets context.
+KEY_REF = re.compile(
+    r"secrets\.(?:" + _NAMES + r")\b"
+    r"|secrets\[\s*\\?['\"](?:" + _NAMES + r")\\?['\"]\s*\]"
+    r"|toJSON\(\s*secrets\s*\)",
+    re.IGNORECASE,
+)
+# No caller can start these two jobs, and another story deletes them, so they are exempt until then.
+EXEMPT_JOBS = {("live-bench.yml", "bench"), ("live-desktop-bench.yml", "bench")}
 
 
 def _workflows() -> dict[str, dict]:
-    return {p.name: yaml.safe_load(p.read_text(encoding="utf-8")) for p in sorted(WORKFLOWS.glob("*.yml"))}
+    paths = sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")])
+    return {p.name: yaml.safe_load(p.read_text(encoding="utf-8")) for p in paths}
 
 
 def _environment_name(job: dict) -> str | None:
@@ -28,23 +37,30 @@ def _environment_name(job: dict) -> str | None:
 
 
 def _uses_a_model_key(job: dict) -> bool:
-    texts = [str(v) for v in (job.get("env") or {}).values()]
-    for step in job.get("steps") or []:
-        texts += [str(v) for v in (step.get("env") or {}).values()]
-        texts += [str(v) for v in (step.get("with") or {}).values()]
-        texts.append(str(step.get("run", "")))
-    return any(KEY_REF.search(t) for t in texts)
+    # The whole job mapping, so env, step env, `with`, `run`, `if` and anything else is covered.
+    return bool(KEY_REF.search(json.dumps(job, default=str))) or job.get("secrets") == "inherit"
 
 
 def test_every_job_that_reads_a_model_key_uses_the_paid_runs_environment() -> None:
     missing = [
         f"{name}:{job_id}"
         for name, wf in _workflows().items()
-        if name not in UNGUARDED_FILES
         for job_id, job in wf["jobs"].items()
-        if _uses_a_model_key(job) and _environment_name(job) != "paid-runs"
+        if (name, job_id) not in EXEMPT_JOBS and _uses_a_model_key(job) and _environment_name(job) != "paid-runs"
     ]
     assert not missing, f"jobs that read a model key without environment: paid-runs: {missing}"
+
+
+def test_the_key_pattern_catches_every_spelling() -> None:
+    for text in (
+        "${{ secrets.GEMINI_API_KEY }}",
+        "${{ secrets['OPENAI_API_KEY'] }}",
+        '${{ secrets["ANTHROPIC_API_KEY"] }}',
+        "${{ toJSON(secrets) }}",
+    ):
+        assert _uses_a_model_key({"env": {"X": text}}), text
+    assert _uses_a_model_key({"uses": "./x.yml", "secrets": "inherit"})
+    assert not _uses_a_model_key({"env": {"X": "${{ secrets.RUNNER_ADMIN_TOKEN }}"}})
 
 
 def test_no_caller_passes_a_model_key_or_inherits() -> None:

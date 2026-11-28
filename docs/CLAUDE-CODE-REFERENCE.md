@@ -60,7 +60,7 @@ Last updated: 2026-11-28. Contains no secrets: keys live in GitHub secrets (the 
 - **Twice-daily story pickup (KAN-217).** A scheduled task ("Twice-daily story pickup") fires into the
   project coordinator at 7:17 AM and 6:17 PM Chicago time. It looks at main first (KAN-222): the free
   workflows `ci.yml` and `security.yml` each look red when their newest finished run on main (schedule, push or
-  hand start together) failed, and `ci.yml` also when a `nightly-failure` issue is open. Gate merges start no push run and GitHub's schedules can
+  hand start together) failed, and `ci.yml` also when a `nightly-failure` issue is open. Gate merges start no push run (the sweep starts `ci.yml` on main after each merge, KAN-283, but it can fail) and GitHub's schedules can
   lag, so the pickup starts a fresh free run of either workflow when its newest one is on an older commit than
   main's head (and of Security also when it is a day old). Each break gets exactly
   one try, recorded on that workflow's own open `main-broken` issue, which the pickup opens before starting a

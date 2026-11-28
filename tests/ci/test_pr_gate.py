@@ -1033,6 +1033,103 @@ def test_sweep_checks_the_pause_before_it_merges_or_notes() -> None:
     assert "Auto-work is paused" in run
     assert "|| echo paused" in run and "rm -f" in run  # fail closed
     assert _wf()["jobs"]["sweep"]["permissions"]["issues"] == "read"
+    assert _wf()["jobs"]["sweep"]["permissions"]["actions"] == "write"  # starts ci.yml on main (KAN-283)
+
+
+def test_sweep_starts_from_events_and_keeps_the_timers() -> None:
+    """KAN-283: CI finishing and review markers start the sweep; schedules and dispatch stay as backups."""
+    on = _wf()[True]
+    names = ["Check code (tests, lint, types)", "Security", "Red test"]
+    assert on["workflow_run"]["workflows"] == names
+    assert on["workflow_run"]["types"] == ["completed"]
+    assert on["issue_comment"]["types"] == ["created"]
+    assert [x["cron"] for x in on["schedule"]] == ["*/30 * * * *", "17 6 * * *"]
+    assert "workflow_dispatch" in on and "pull_request" in on
+    files = ["ci.yml", "security.yml", "red-test.yml"]
+    on_disk = [yaml.safe_load((ROOT / ".github" / "workflows" / f).read_text(encoding="utf-8"))["name"] for f in files]
+    assert on_disk == names  # a rename must not silently break the trigger
+
+
+def test_sweep_if_allows_only_pr_ci_and_trusted_pass_markers() -> None:
+    jobs = _wf()["jobs"]
+    cond = jobs["sweep"]["if"]
+    assert cond.startswith("github.ref == 'refs/heads/main' && (")
+    for needle in (
+        "github.event.workflow_run.event == 'pull_request'",
+        "operon-verifier: PASS",
+        "operon-top-review: PASS",
+        "author_association",
+    ):
+        assert needle in cond, needle
+    assert "github.event_name == 'pull_request'" in jobs["label"]["if"]
+    assert "github.event_name == 'schedule'" in jobs["daily"]["if"]
+    assert "'17 6 * * *'" in jobs["daily"]["if"]
+
+
+def test_sweep_starts_ci_on_main_after_a_merge() -> None:
+    run = _sweep_run()
+    start = 'gh workflow run ci.yml --repo "$REPO" --ref main'
+    assert run.count(start) == 1
+    assert run.index("merged=0") < run.index("while read -r n")
+    assert run.index("gh pr merge") < run.index("merged=1") < run.index('done < "$work/prs"') < run.index(start)
+    assert '[ "$merged" = 1 ]' in run[run.index('done < "$work/prs"') : run.index(start)]
+    assert "${{" not in run
+
+
+FAKE_SWEEP_GH = """#!/bin/sh
+echo "$@" >> "$FAKE_GH_LOG"
+case "$*" in
+  "pr list"*"--label low-risk"*) echo 5 ;;
+  "api repos/o/r/pulls/5") echo '{"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' ;;
+  "api"*"issues?state=open"*) echo '[]' ;;
+  "api"*"/issues/5/comments"*) echo '[]' ;;
+  "api"*"/files"*) echo '[]' ;;
+  "api"*"/status") echo '{}' ;;
+esac
+exit 0
+"""
+
+# merge-ready answers from FAKE_VERDICT; every other pr_gate.py command (paused) runs for real.
+FAKE_SWEEP_PY = """#!/bin/sh
+if [ "$2" = merge-ready ]; then echo "$FAKE_VERDICT"; exit 0; fi
+exec "$REAL_PYTHON" "$@"
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="shells out to bash (KAN-195)")
+@pytest.mark.parametrize(("verdict", "starts_ci"), [("ready", 1), ("not-ready", 0)])
+def test_sweep_starts_ci_on_main_only_when_something_merged(tmp_path: Path, verdict: str, starts_ci: int) -> None:
+    import os
+    import shutil
+    import subprocess
+
+    bash, jq = shutil.which("bash"), shutil.which("jq")
+    if not bash or not jq:
+        pytest.skip("needs bash and jq")
+    script = tmp_path / "sweep.sh"
+    script.write_text(_sweep_run(), encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    for name, body in (("gh", FAKE_SWEEP_GH), ("python3", FAKE_SWEEP_PY)):
+        f = fakebin / name
+        f.write_text(body, encoding="utf-8")
+        f.chmod(0o755)
+    log = tmp_path / "gh.log"
+    env = {
+        "PATH": os.pathsep.join([str(fakebin), str(Path(jq).parent), str(Path(bash).parent)]),
+        "RUNNER_TEMP": str(tmp_path),
+        "REPO": "o/r",
+        "AUTO_MERGE": "on",
+        "FAKE_VERDICT": verdict,
+        "FAKE_GH_LOG": str(log),
+        "REAL_PYTHON": sys.executable,
+        "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+    }
+    done = subprocess.run([bash, str(script)], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert sum(c.startswith("pr merge") for c in calls) == starts_ci
+    assert calls.count("workflow run ci.yml --repo o/r --ref main") == starts_ci
 
 
 def test_sweep_checks_the_pause_again_before_each_merge_and_note() -> None:

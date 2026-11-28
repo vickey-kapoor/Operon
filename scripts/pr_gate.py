@@ -479,29 +479,14 @@ def is_fork_pr(pr: dict[str, Any]) -> bool:
 
 REAL_CHECK_REASON = "no 'Real check:' line with a link in the PR description"
 
-# Quote marks, list markers and spaces before a line's content. Fence detection runs on what follows them, so a fence
-# inside a quote or a list item is still a fence (fail closed; this is not a full Markdown parser).
-_CONTAINER_RE = re.compile(r"^(?:[ \t]|>|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t]))*")
-_FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
-_REAL_CHECK_LINE_RE = re.compile(r"^ {0,3}(?:[ \t#*_+-]|\d{1,9}[.)])*real check[ \t]*[*_]*[ \t]*:(?P<rest>.*)$", re.IGNORECASE)
+# A line that looks like a code fence after any run of spaces, tabs, quote marks and list markers: the scan stops there.
+_FENCE_LIKE_RE = re.compile(r"^(?:[ \t>]|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t]))*(?:```|~~~)")
+# A top-level line (no indentation, no quote): one optional list marker, one optional heading mark, then the words.
+_REAL_CHECK_LINE_RE = re.compile(
+    r"^(?:(?:[-*+]|\d{1,9}[.)]) )?(?:\#{1,6} )?[*_]*real check *[*_]* *:(?P<rest>.*)$", re.IGNORECASE
+)
 _LINK_RE = re.compile(r"https?://\S")
-
-
-def _indent_width(line: str) -> int:
-    """Columns of leading whitespace, a tab going to the next multiple of 4 (markdown code is 4 or more)."""
-    col = 0
-    for ch in line:
-        if ch == " ":
-            col += 1
-        elif ch == "\t":
-            col += 4 - col % 4
-        else:
-            break
-    return col
-
-
 _LINE_BREAK_RE = re.compile(r"\r\n|\r|\n")  # not str.splitlines(): it also splits on \x0b, \x0c, \x85, U+2028 ...
-_LIST_ITEM_RE = re.compile(r"^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]")
 
 
 def _strip_comments(line: str, in_comment: bool) -> tuple[str, bool]:
@@ -523,31 +508,21 @@ def _strip_comments(line: str, in_comment: bool) -> tuple[str, bool]:
 def has_real_check(body: str | None) -> bool:
     """Whether a PR description has a "Real check:" line with a link on the same line (KAN-298).
 
-    Lines are split on CR, LF or CRLF only. Fenced code blocks (an unclosed fence runs to the end) are tracked first and
-    nothing inside one counts; HTML comments (an unclosed ``<!--`` runs to the end) are removed only outside fences, so
-    the template's hint never counts. Fences are found after any quote and list prefix. A line indented 4 or more
-    columns is code, unless it is a list item. List prefixes (``-``, ``*``, ``+``, ``1.``, ``2)``) and heading marks
-    are allowed before the words; a line inside a blockquote (``>``) never counts.
+    The line must be a top-level line (column 0, no quote, at most one list marker and one heading mark before the
+    words) and must come before any code block. Fail closed by construction: lines are split on CR, LF or CRLF only,
+    HTML comments (may span lines, an unclosed one runs to the end) never count, and the scan stops at the first
+    fence-like line (``` or ~~~ after any spaces, quote marks and list markers, even inside a comment), so nothing
+    after it counts. This is not a Markdown parser.
     """
     if not isinstance(body, str):
         return False
-    fence = ""  # the opening fence while inside a code block (CommonMark: same character, at least as long to close)
     in_comment = False
     for raw in _LINE_BREAK_RE.split(body):
-        container = _CONTAINER_RE.match(raw)
-        if fence:
-            f = _FENCE_RE.match(raw[container.end() :] if container else raw)
-            if f and f.group("fence")[0] == fence[0] and len(f.group("fence")) >= len(fence) and not f.group("info").strip():
-                fence = ""
-            continue
+        if _FENCE_LIKE_RE.match(raw):
+            return False
         line, in_comment = _strip_comments(raw, in_comment)
-        container = _CONTAINER_RE.match(line)
-        f = _FENCE_RE.match(line[container.end() :] if container else line)
-        if f and not (f.group("fence")[0] == "`" and "`" in f.group("info")):
-            fence = f.group("fence")
-            continue
-        if _indent_width(line) >= 4 and not _LIST_ITEM_RE.match(line):
-            continue
+        if _FENCE_LIKE_RE.match(line):
+            return False
         m = _REAL_CHECK_LINE_RE.match(line)
         if m and _LINK_RE.search(m.group("rest")):
             return True

@@ -1144,7 +1144,6 @@ def test_real_check_forms_that_count() -> None:
     assert gate.has_real_check(f"- **Real check:** {RC_LINK}")
     assert gate.has_real_check(f"**Real check**: {RC_LINK}")
     assert gate.has_real_check(f"## Real check\nReal check: see {RC_LINK}")
-    assert not gate.has_real_check(f"> REAL CHECK: {RC_LINK}")  # a blockquote line never counts
     assert gate.has_real_check(f"<!-- hint -->\nReal check: {RC_LINK}")
 
 
@@ -1183,83 +1182,44 @@ def test_sweep_notes_a_missing_real_check_once_per_head_and_never_merges_it() ->
     assert "operon-gate-real-check: $sha" in branch
     assert "github-actions[bot]" in branch and "contains($m)" in branch  # dedupe on the bot and the head sha
     assert "--body-file" in branch and "gh pr comment" in branch
+    assert "put it on its own top-level line, before any code block" in branch
     assert branch.index('"$(pause_state)"') < branch.index("gh pr comment")
     assert "gh pr merge" not in branch and "--add-label" not in branch
     assert "\n    continue\n" in branch
 
 
-def test_real_check_inside_a_code_block_or_indented_does_not_count() -> None:
-    assert not gate.has_real_check(f"```\nReal check: {RC_LINK}\n```")
-    assert not gate.has_real_check(f"~~~\nReal check: {RC_LINK}\n~~~")
-    assert not gate.has_real_check(f"```text\nReal check: {RC_LINK}")  # unclosed fence runs to the end
-    assert not gate.has_real_check(f"    Real check: {RC_LINK}")
-    assert gate.has_real_check(f"```\ncode\n```\nReal check: {RC_LINK}")  # after the fence closes
-
-
-def test_real_check_accepts_numbered_and_plus_list_prefixes() -> None:
-    for prefix in ("1. ", "2) ", "+ ", "10. **", "- 3. "):
-        suffix = "**" if prefix.endswith("**") else ""
-        text = f"{prefix}Real check:{suffix} {RC_LINK}"
+def test_real_check_prefix_forms_and_top_level_only() -> None:
+    line = f"Real check: {RC_LINK}"
+    for text in (f"1. {line}", f"2) {line}", f"+ {line}", f"- {line}", f"## {line}", f"- **Real check:** {RC_LINK}"):
         assert gate.has_real_check(text), text
+    for text in (f"> {line}", f"- > {line}", f"  {line}", f"\t{line}", f"- Proof\n    - {line}", f"    {line}"):
+        assert not gate.has_real_check(text), text  # quoted or indented: not a top-level line (nested bullets too)
 
 
-def test_real_check_fences_close_only_on_a_matching_fence() -> None:
+def test_real_check_must_come_before_any_code_block() -> None:
     line = f"Real check: {RC_LINK}"
-    assert not gate.has_real_check(f"````\n```\n{line}\n````")  # inner ``` does not close a 4-backtick fence
-    assert not gate.has_real_check(f"```\n~~~\n{line}\n```")  # ~~~ does not close a ``` fence
-    assert not gate.has_real_check(f"```\n```x\n{line}\n```")  # a closing fence has no info string
-    assert gate.has_real_check(f"````\n```\ninner\n````\n{line}")  # properly closed long fence, line after counts
-    assert gate.has_real_check(f"```\ncode\n`````\n{line}")  # a longer fence closes too
-    assert gate.has_real_check(f"``` a`b\n{line}")  # a backtick info string with a backtick is not a fence
-
-
-def test_real_check_indent_counts_tabs_as_columns() -> None:
-    line = f"Real check: {RC_LINK}"
-    assert not gate.has_real_check(f" \t{line}")  # 1 space + tab = 4 columns
-    assert not gate.has_real_check(f"\t{line}")
-    assert not gate.has_real_check(f"  \t{line}")
-    assert gate.has_real_check(f"   {line}")  # 3 columns is still a paragraph
-
-
-def test_real_check_backtick_info_string_line_does_not_open_a_fence() -> None:
-    line = f"Real check: {RC_LINK}"
-    assert not gate.has_real_check(f"```code``` {line}")  # not a fence, and not a Real check line either
-    assert gate.has_real_check(f"```code``` x\n{line}")  # no fence was opened, so the next line counts
-
-
-def test_real_check_ignores_fences_inside_quotes_and_lists() -> None:
-    line = f"Real check: {RC_LINK}"
+    assert gate.has_real_check(f"{line}\n```\ncode\n```")
+    assert not gate.has_real_check(f"```\n{line}\n```")
+    assert not gate.has_real_check(f"```\ncode\n```\n{line}")  # after a normal closed code block
+    assert not gate.has_real_check(f"~~~\ncode\n~~~\n{line}")
     assert not gate.has_real_check(f"> ```text\n> {line}\n> ```")
     assert not gate.has_real_check(f"- ```text\n  {line}\n  ```")
-    assert not gate.has_real_check(f"1. ```text\n{line}\n```")
-    assert not gate.has_real_check(f"> - ```text\n> - {line}\n> - ```")  # nested quote and list
-    assert not gate.has_real_check(f"> {line}")
-    assert not gate.has_real_check(f"- > {line}")
-    assert gate.has_real_check(f"> ```\n> x\n> ```\n- {line}")  # closed, and a list line counts
-    assert gate.has_real_check(f"- ```\n  x\n  ```\n{line}")
+    assert not gate.has_real_check(f"> - ```text\n> - {line}\n> - ```")
+    assert not gate.has_real_check(f"1. ```\n{line}")
+    # Codex round 3, reproducer 1: a "- ```" line inside a top-level fence does not close it.
+    assert not gate.has_real_check(f"```\n- ```\n{line}\n```")
+    # Codex round 3, reproducer 2: indented text with no parent list is code and does not count.
+    assert not gate.has_real_check(f"intro\n\n    - {line}")
+    # The scan stops at a fence-like line even inside an HTML comment.
+    assert not gate.has_real_check(f"<!--\n```\n-->\n{line}")
 
 
-def test_real_check_lines_split_only_on_cr_lf() -> None:
-    line = f"Real check: {RC_LINK}"
-    assert gate.has_real_check(f"intro\r\n{line}")
-    assert gate.has_real_check(f"intro\r{line}")
-    for sep in ("\x0b", "\x0c", "\x85", "\u2028", "\u2029"):
-        assert not gate.has_real_check(f"> quote{sep}{line}"), repr(sep)  # still one (quoted) line
-        assert not gate.has_real_check(f"```{sep}{line}\n```"), repr(sep)
-
-
-def test_real_check_html_comments_only_count_outside_fences() -> None:
+def test_real_check_html_comments_and_line_breaks() -> None:
     line = f"Real check: {RC_LINK}"
     assert not gate.has_real_check(f"<!-- hint\n{line}\n-->")  # a comment spanning lines
-    assert not gate.has_real_check(f"```\n<!--\n```\n<!-- x\n{line}")  # a fence's <!-- opens nothing; this one is unclosed
-    assert gate.has_real_check(f"```\n<!-- not a comment\n```\n{line}")  # a <!-- inside a fence hides nothing after it
+    assert not gate.has_real_check(f"x\n<!-- unclosed\n{line}")
     assert gate.has_real_check(f"<!-- a --> <!-- b -->\n{line}")
-    assert gate.has_real_check(f"<!-- ```\n-->\n{line}")  # comment text never opens a fence
+    assert gate.has_real_check(f"intro\r\n{line}") and gate.has_real_check(f"intro\r{line}")
+    for sep in ("\x0b", "\x0c", "\x85", "\u2028", "\u2029"):
+        assert not gate.has_real_check(f"intro{sep}{line}"), repr(sep)  # not a line break: still one line
 
-
-def test_real_check_nested_list_item_indented_four_columns_counts() -> None:
-    line = f"Real check: {RC_LINK}"
-    assert gate.has_real_check(f"- Proof\n    - {line}")
-    assert gate.has_real_check(f"1. Proof\n    2. {line}")
-    assert gate.has_real_check(f"- Proof\n\t- {line}")
-    assert not gate.has_real_check(f"- Proof\n\n    {line}")  # plain indented code is still code

@@ -146,7 +146,7 @@ jobs:
               fi
               if ! jq -e --arg m "operon-gate-real-check: $sha" \
                 'any(.[]; .user.login == "github-actions[bot]" and ((.body // "") | contains($m)))' "$d/comments.json" > /dev/null; then
-                printf '<!-- operon-gate-real-check: %s -->\nNot merged yet: the description has no "Real check:" line with a link to a real $0 run (a real end-to-end test run, a GitHub dry run, or a replay of real data). Add one and the next sweep can merge it (KAN-298).\n' "$sha" > "$d/real-check.md"
+                printf '<!-- operon-gate-real-check: %s -->\nNot merged yet: the description has no "Real check:" line with a link to a real $0 run (a real end-to-end test run, a GitHub dry run, or a replay of real data). Add one: put it on its own top-level line, before any code block. The next sweep can merge it (KAN-298).\n' "$sha" > "$d/real-check.md"
                 gh pr comment "$n" --repo "$REPO" --body-file "$d/real-check.md" || echo "::warning::PR $n: the real-check note failed"
               fi
               continue

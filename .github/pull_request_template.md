@@ -8,7 +8,7 @@
 
 ## Real check
 
-Real check: <!-- Required for every PR the gate merges (KAN-298). A link to a real $0 run of the change and what it showed: a real end-to-end test run, a GitHub dry run, or a replay of real data. Never a paid run. Unit tests and reviews alone do not count. -->
+Real check: <!-- Required for every PR the gate merges (KAN-298). A link to a real $0 run of the change and what it showed: a real end-to-end test run, a GitHub dry run, or a replay of real data. Never a paid run. Unit tests and reviews alone do not count. Put it on its own top-level line, before any code block. -->
 
 ## Risk?
 

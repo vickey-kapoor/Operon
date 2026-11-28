@@ -1033,6 +1033,133 @@ def test_sweep_checks_the_pause_before_it_merges_or_notes() -> None:
     assert "Auto-work is paused" in run
     assert "|| echo paused" in run and "rm -f" in run  # fail closed
     assert _wf()["jobs"]["sweep"]["permissions"]["issues"] == "read"
+    assert "actions" not in _wf()["jobs"]["sweep"]["permissions"]  # least privilege: start-main-ci holds it (KAN-283)
+
+
+def test_sweep_starts_from_events_and_keeps_the_timers() -> None:
+    """KAN-283: CI finishing and review markers start the sweep; schedules and dispatch stay as backups."""
+    on = _wf()[True]
+    names = ["Check code (tests, lint, types)", "Security", "Red test"]
+    assert on["workflow_run"]["workflows"] == names
+    assert on["workflow_run"]["types"] == ["completed"]
+    assert on["issue_comment"]["types"] == ["created"]
+    assert [x["cron"] for x in on["schedule"]] == ["*/30 * * * *", "17 6 * * *"]
+    assert "workflow_dispatch" in on and "pull_request" in on
+    files = ["ci.yml", "security.yml", "red-test.yml"]
+    on_disk = [yaml.safe_load((ROOT / ".github" / "workflows" / f).read_text(encoding="utf-8"))["name"] for f in files]
+    assert on_disk == names  # a rename must not silently break the trigger
+
+
+def test_sweep_if_allows_only_pr_ci_and_trusted_pass_markers() -> None:
+    jobs = _wf()["jobs"]
+    cond = jobs["sweep"]["if"]
+    assert cond.startswith("github.ref == 'refs/heads/main' && (")
+    for needle in (
+        "github.event.workflow_run.event == 'pull_request'",
+        "operon-verifier: PASS",
+        "operon-top-review: PASS",
+        "author_association",
+    ):
+        assert needle in cond, needle
+    assert "github.event_name == 'pull_request'" in jobs["label"]["if"]
+    assert "github.event_name == 'schedule'" in jobs["daily"]["if"]
+    assert "'17 6 * * *'" in jobs["daily"]["if"]
+
+
+START_CI = 'gh workflow run ci.yml --repo "$REPO" --ref main'
+
+
+def test_sweep_reports_a_merge_and_a_separate_job_starts_ci_on_main() -> None:
+    jobs = _wf()["jobs"]
+    sweep, start = jobs["sweep"], jobs["start-main-ci"]
+    run = _sweep_run()
+    step = next(s for s in sweep["steps"] if "run" in s)
+    assert sweep["outputs"]["merged"] == "${{ steps.%s.outputs.merged }}" % step["id"]
+    assert "gh workflow run" not in run
+    assert run.index("merged=0") < run.index("trap ") < run.index("pr_gate.py paused") < run.index("while read -r n")
+    assert """trap 'echo "merged=$merged" >> "$GITHUB_OUTPUT"' EXIT""" in run
+    assert run.count("merged=0") == 1
+    assert run.index("gh pr merge") < run.index("merged=1") < run.index('done < "$work/prs"')
+    assert "${{" not in run
+    assert start["permissions"] == {"actions": "write"}
+    assert start["needs"] == "sweep"
+    assert "needs.sweep.outputs.merged == '1'" in start["if"]
+    assert start["runs-on"] == "ubuntu-latest" and start["timeout-minutes"] == 5
+    assert len(start["steps"]) == 1 and start["steps"][0]["run"] == START_CI
+    assert not any("uses" in x for x in start["steps"])
+    assert "${{" not in start["steps"][0]["run"]
+
+
+FAKE_SWEEP_GH = """#!/bin/sh
+echo "$@" >> "$FAKE_GH_LOG"
+case "$*" in
+  "pr list"*"--label low-risk"*) echo 5; echo 6 ;;
+  "api repos/o/r/pulls/"[56]) echo '{"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' ;;
+  "api"*"issues?state=open"*)
+    # FAKE_PAUSE_AFTER_MERGE: the pause label appears once a PR has been merged.
+    if [ -n "$FAKE_PAUSE_AFTER_MERGE" ] && grep -q "^pr merge" "$FAKE_GH_LOG"; then
+      echo '[{"number":1,"state":"open","labels":[{"name":"auto-work-paused"}]}]'
+    else
+      echo '[]'
+    fi ;;
+  "api"*"/comments"*) echo '[]' ;;
+  "api"*"/files"*) echo '[]' ;;
+  "api"*"/status") echo '{}' ;;
+esac
+exit 0
+"""
+
+# merge-ready answers from FAKE_VERDICT; every other pr_gate.py command (paused) runs for real.
+FAKE_SWEEP_PY = """#!/bin/sh
+if [ "$2" = merge-ready ]; then echo "$FAKE_VERDICT"; exit 0; fi
+exec "$REAL_PYTHON" "$@"
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="shells out to bash (KAN-195)")
+@pytest.mark.parametrize(
+    ("verdict", "pause_after_merge", "merged"),
+    [("ready", False, 1), ("not-ready", False, 0), ("ready", True, 1)],
+)
+def test_sweep_reports_merged_in_github_output(tmp_path: Path, verdict: str, pause_after_merge: bool, merged: int) -> None:
+    import os
+    import shutil
+    import subprocess
+
+    bash, jq = shutil.which("bash"), shutil.which("jq")
+    if not bash or not jq:
+        pytest.skip("needs bash and jq")
+    script = tmp_path / "sweep.sh"
+    script.write_text(_sweep_run(), encoding="utf-8")
+    fakebin = tmp_path / "bin"
+    fakebin.mkdir()
+    for name, body in (("gh", FAKE_SWEEP_GH), ("python3", FAKE_SWEEP_PY)):
+        f = fakebin / name
+        f.write_text(body, encoding="utf-8")
+        f.chmod(0o755)
+    log = tmp_path / "gh.log"
+    out = tmp_path / "github_output"
+    env = {
+        "PATH": os.pathsep.join([str(fakebin), str(Path(jq).parent), str(Path(bash).parent)]),
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_OUTPUT": str(out),
+        "REPO": "o/r",
+        "AUTO_MERGE": "on",
+        "FAKE_VERDICT": verdict,
+        "FAKE_GH_LOG": str(log),
+        "REAL_PYTHON": sys.executable,
+        "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+    }
+    if pause_after_merge:
+        env["FAKE_PAUSE_AFTER_MERGE"] = "1"
+    done = subprocess.run([bash, str(script)], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+    assert done.returncode == 0, done.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert not any(c.startswith("workflow run") for c in calls)  # the sweep holds no actions: write
+    assert out.read_text(encoding="utf-8").splitlines() == [f"merged={merged}"]
+    if pause_after_merge:
+        assert "Auto-work is paused" in done.stdout  # the second PR hit the pause and the script left early
+        assert sum(c.startswith("pr merge") for c in calls) == 1
 
 
 def test_sweep_checks_the_pause_again_before_each_merge_and_note() -> None:
@@ -1091,6 +1218,7 @@ def test_sweep_pause_prefix_runs_with_a_fake_gh(tmp_path: Path, mode: str, body:
         "RUNNER_TEMP": str(tmp_path),
         "REPO": "o/r",
         "FAKE_GH_MODE": mode,
+        "GITHUB_OUTPUT": str(tmp_path / "github_output"),
         "FAKE_GH_BODY": str(tmp_path / "body.json"),
         "FAKE_GH_LOG": str(log),
         "PYTHONPATH": os.environ.get("PYTHONPATH", ""),

@@ -9,14 +9,25 @@
 # or files). The label is advisory: on pull_request this workflow file comes from the PR itself, so a PR that edits it
 # can change what its own label job does. What enforces is the sweep on main: it reclassifies every PR with main's
 # script from the PR's files and refuses needs-vickey, whatever the labels or notes say.
+#
+# KAN-283: GitHub throttles scheduled runs (the */30 sweep ran 7 times in 2 days), so the sweep now starts from events: a
+# finished CI, Security or Red test run on a PR, and a verifier or top-review PASS marker comment. The timer is a backup.
+# After a merge the start-main-ci job starts ci.yml on main (a merge made with GITHUB_TOKEN starts no push CI).
 name: PR gate
 
 on:
   pull_request:
     branches: ["main", "master"]
     types: [opened, synchronize, reopened, ready_for_review]
+  # Safe: the sweep uses no data from these two events (it only reads PRs through the API with main's script), and
+  # workflow_run and issue_comment always run main's copy of this file.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: ["Check code (tests, lint, types)", "Security", "Red test"]
+    types: [completed]
+  issue_comment: # zizmor: ignore[dangerous-triggers]
+    types: [created]
   schedule:
-    - cron: "*/30 * * * *" # sweep: merge (or note) PRs that became ready
+    - cron: "*/30 * * * *" # sweep, now a backup for the event starts above (KAN-283): merge (or note) PRs that became ready
     - cron: "17 6 * * *" # once a day: report what the gate did
   workflow_dispatch:
 
@@ -71,7 +82,14 @@ jobs:
 
   sweep:
     name: Sweep and merge
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && github.event.schedule == '*/30 * * * *'))
+    # workflow_run: only a PR's CI finishing (main's own CI finishing must not start a sweep: it would loop with the
+    # ci.yml start below). issue_comment: only a verifier or top-review PASS marker from a trusted commenter on a PR.
+    if: >-
+      github.ref == 'refs/heads/main' && (
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && github.event.schedule == '*/30 * * * *') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && (contains(github.event.comment.body, 'operon-verifier: PASS') || contains(github.event.comment.body, 'operon-top-review: PASS'))))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -80,6 +98,8 @@ jobs:
       checks: read
       statuses: read
       issues: read # the pause check (KAN-229)
+    outputs:
+      merged: ${{ steps.check.outputs.merged }} # 1 when this sweep merged a PR; start-main-ci reads it (KAN-283)
     concurrency:
       group: pr-gate-sweep
       cancel-in-progress: false
@@ -92,8 +112,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Check every open low-risk or risky PR
+        id: check
         run: |
           set -euo pipefail
+          # Report whether a PR was merged on every exit, early pause exits and errors after a merge included.
+          merged=0
+          trap 'echo "merged=$merged" >> "$GITHUB_OUTPUT"' EXIT
           work="$RUNNER_TEMP/gate"
           mkdir -p "$work"
           # KAN-229: an open issue labelled auto-work-paused stops all merging and would-merge notes. Fail closed:
@@ -158,6 +182,7 @@ jobs:
             fi
             if [ "$AUTO_MERGE" = on ]; then
               if gh pr merge "$n" --repo "$REPO" --squash --match-head-commit "$sha"; then
+                merged=1
                 gh pr edit "$n" --repo "$REPO" --add-label auto-merged || echo "::warning::PR $n: merged, but adding the auto-merged label failed"
               else
                 echo "::warning::PR $n: merge refused (head moved or branch rules); next sweep retries"
@@ -169,6 +194,22 @@ jobs:
               gh pr edit "$n" --repo "$REPO" --add-label gate-would-merge || echo "::warning::PR $n: adding the gate-would-merge label failed"
             fi
           done < "$work/prs"
+
+  start-main-ci:
+    name: Start tests on main
+    # Gate merges use GITHUB_TOKEN, which starts no push CI, but GITHUB_TOKEN may start workflow_dispatch (KAN-283).
+    # Its own job so the sweep never holds actions: write.
+    needs: sweep
+    if: always() && needs.sweep.outputs.merged == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - run: gh workflow run ci.yml --repo "$REPO" --ref main
 
   daily:
     name: Daily note

@@ -6,7 +6,8 @@ on:
   pull_request:
     branches: ["main", "master"]
   # KAN-228: merges made by the PR gate use GITHUB_TOKEN, which does not start push CI, so the free jobs also
-  # run on main every night (02:23 UTC = 8:23 PM Chicago, before the 9:47 PM daily note).
+  # run on main every night (02:23 UTC = 8:23 PM Chicago, before the 9:47 PM daily note). The PR gate sweep now also
+  # starts this workflow on main after each merge (KAN-283); the nightly stays as a backup.
   schedule:
     - cron: "23 2 * * *"
   workflow_dispatch:

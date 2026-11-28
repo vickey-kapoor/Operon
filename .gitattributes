@@ -1,0 +1,2 @@
+# The VM startup script must reach Linux with LF endings, also from a Windows checkout (KAN-224).
+infra/**/*.sh text eol=lf

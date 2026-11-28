@@ -224,6 +224,14 @@ def test_observer_ui_and_run_snapshot(monkeypatch) -> None:
     assert body["run"]["run_id"] == run_id
     assert body["run"]["current_phase"] == "recover"
     assert body["run"]["session_video_path"] == str(video_path)
+    assert body["approval_audit"] == []
+    from operon.store.approval_audit import append_event, request_event
+
+    audit_event = request_event(run_id, 1, "trust")
+    append_event(step_dir.parent / "approval_audit.jsonl", audit_event)
+    [audit_row] = client.get(f"/observer/api/run/{run_id}").json()["approval_audit"]
+    assert audit_row["request_id"] == audit_event["request_id"]
+    assert audit_row["outcome"] == "requested"
     assert body["current_step"]["selector"]["trace"]["selected_candidate"] == "submit-button"
     assert body["current_step"]["execution"]["trace"]["final_outcome"] == "success"
     assert body["current_step"]["plan"]["rationale"] == "Submit form."

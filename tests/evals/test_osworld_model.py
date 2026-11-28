@@ -67,3 +67,49 @@ def test_main_refuses_an_unknown_model(tmp_path, capsys) -> None:
     with pytest.raises(SystemExit):
         osworld.main(["--osworld-repo", str(tmp_path), "--model", "claude-opus-5-5"], env_factory=lambda r: None)
     assert "--model must be one of" in capsys.readouterr().err
+
+
+def test_the_done_check_is_off_unless_asked_even_if_the_runner_has_it_on(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_DONE_CHECK", "on")
+    assert osworld.operon_env("http://vm:5000", "/runs")["OPERON_DONE_CHECK"] == "off"
+    assert osworld.operon_env("http://vm:5000", "/runs", done_check=True)["OPERON_DONE_CHECK"] == "on"
+
+
+def test_main_passes_the_done_check_and_records_it(tmp_path, monkeypatch) -> None:
+    seen = {}
+
+    class FakeEnv:
+        vm_ip, server_port = "1.2.3.4", 5000
+
+        def reset(self, task_config): ...
+
+        def evaluate(self):
+            return 1.0
+
+    def fake_run(cmd, env, **kw):
+        seen["env"] = env
+
+        class Done:
+            returncode, stdout, stderr = 0, "", ""
+
+        return Done()
+
+    task = {"domain": "chrome", "id": "abcd1234", "instruction": "x"}
+    monkeypatch.setattr(osworld, "load_subset", lambda *a: [task])
+    monkeypatch.setattr(osworld, "task_config", lambda repo, t: {})
+    monkeypatch.setattr(osworld, "wait_for_desktop", lambda url: True)
+    monkeypatch.setattr(osworld.time, "sleep", lambda s: None)
+    code = osworld.main(["--osworld-repo", str(tmp_path), "--done-check", "on", "--out", str(tmp_path / "out")],
+                        env_factory=lambda repo: FakeEnv(), run=fake_run)
+    assert code == 0 and seen["env"]["OPERON_DONE_CHECK"] == "on"
+    report = json.loads(next((tmp_path / "out").glob("osworld-*.json")).read_text("utf-8"))
+    assert report["done_check"] is True and report["label"] == "Gemini · OSWorld · done check"
+    assert report["results"][0]["done_checks"] == {}
+
+
+def test_a_task_result_carries_the_runs_done_check_counts(tmp_path) -> None:
+    run_dir = tmp_path / "r1"
+    run_dir.mkdir()
+    (run_dir / "state.json").write_text(json.dumps({"done_checks": {"checked": 2, "rejected": 1, "accepted": 1}}), "utf-8")
+    assert osworld.run_done_checks("r1", tmp_path) == {"checked": 2, "rejected": 1, "accepted": 1}
+    assert osworld.run_done_checks("missing", tmp_path) == {} and osworld.run_done_checks(None, tmp_path) == {}

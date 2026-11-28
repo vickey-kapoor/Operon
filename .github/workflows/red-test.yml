@@ -1,0 +1,75 @@
+name: Red test
+
+# KAN-280: the PR's changed tests must fail on the base branch's code, so each fix's test is proven to catch
+# its bug. Free: no model key, GitHub's runner. `labeled` is left out to keep one run per push. After adding
+# label `no-red-test`, re-run this job (it reads the labels when it runs).
+on:
+  pull_request:
+    branches: ["main", "master"]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: red-test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  red-test:
+    name: Tests fail without the fix
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      UV_PYTHON: "3.14"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Read the PR's current labels
+        id: labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if gh pr view "$PR" --repo "$REPO" --json labels --jq '.labels[].name' | grep -qx 'no-red-test'; then
+            echo "opt_out=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "opt_out=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install uv (packages cached between runs, keyed on uv.lock)
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies (exact versions from uv.lock)
+        run: uv sync --locked --extra dev --extra dashboard
+
+      - name: Run the PR's tests on the base code
+        env:
+          OPT_OUT: ${{ steps.labels.outputs.opt_out }}
+          GEMINI_API_KEY: fake-test-key
+          OPERON_TEST_SAFE_MODE: "true"
+        run: |
+          # The checkout is the PR merge commit; its first parent is the base branch tip the merge was built on.
+          BASE_SHA="$(git rev-parse HEAD^1)"
+          OPT_OUT_FLAG=""
+          if [ "$OPT_OUT" = "true" ]; then OPT_OUT_FLAG="--opt-out"; fi
+          # Run main's copy of the script so a PR's edits to it don't judge that same PR. Edits to this workflow
+          # file still run from the PR, which is why workflow changes wait for Vickey.
+          CHECK="scripts/red_test_check.py"
+          if git cat-file -e "$BASE_SHA:scripts/red_test_check.py" 2>/dev/null; then
+            git show "$BASE_SHA:scripts/red_test_check.py" > "$RUNNER_TEMP/red_test_check.py"
+            CHECK="$RUNNER_TEMP/red_test_check.py"
+          else
+            echo "Note: scripts/red_test_check.py is not on the base branch yet (first rollout); running the PR's copy."
+          fi
+          uv run python -P "$CHECK" --base "$BASE_SHA" ${OPT_OUT_FLAG}

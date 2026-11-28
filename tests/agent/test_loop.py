@@ -227,9 +227,8 @@ async def test_agent_loop_delegates_stage_inputs_and_outputs() -> None:
     response = await loop.step_run(StepRequest(run_id="run-2"))
 
     capture_service.capture.assert_awaited_once_with(initial_state)
-    remapped_executed = executed.model_copy(
-        update={"artifact_path": str(run_root / "run-2" / "step_1" / "after.png")}
-    )
+    # The executor saved no after screenshot, so the loop names none either (KAN-219).
+    remapped_executed = executed
     perception_service.perceive.assert_awaited_once_with(frame, initial_state)
     run_store.update_state.assert_awaited_once_with("run-2", perception)
     policy_service.choose_action.assert_awaited_once_with(updated_state, perception)
@@ -433,19 +432,34 @@ async def test_agent_loop_start_run_skips_reset_desktop_in_browser_mode() -> Non
     executor.reset_desktop.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    ("clear_desktop", "benchmark", "provider", "expected"),
+    [
+        (None, None, "live", False),  # a task on your own PC leaves your windows alone
+        (None, "osworld", "live", True),  # a benchmark run wants a clean screen
+        (None, None, "windows-sandbox", True),  # a throwaway machine: nothing of yours to hide
+        (None, None, "linux-container", True),
+        (True, None, "live", True),  # the request asks for it
+        (False, "osworld", "windows-sandbox", False),  # the request says no
+        (False, "osworld", "live", False),
+        (None, None, "osworld", True),
+    ],
+)
 @pytest.mark.asyncio
-async def test_agent_loop_start_run_runs_reset_desktop_in_desktop_mode(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_agent_loop_start_run_hides_windows_only_when_wanted(
+    monkeypatch: pytest.MonkeyPatch, clear_desktop, benchmark, provider, expected
 ) -> None:
-    """Desktop mode still gets a clean slate at the start of each run.
+    """KAN-205: Win+D at run start only for benchmark runs, throwaway machines or on request.
 
-    conftest sets OPERON_TEST_SAFE_MODE=true globally to suppress real
-    side-effects during the suite — disable it here so we can verify the
-    real desktop-mode reset_desktop dispatch.
-    """
+    conftest sets OPERON_TEST_SAFE_MODE=true globally to suppress real side effects; it is
+    removed here so the real reset_desktop dispatch is checked."""
+    from types import SimpleNamespace
+
     from operon.core.contracts.perception import Environment as UnifiedEnvironment
+    from operon.core.runtime import current_runtime
 
     monkeypatch.delenv("OPERON_TEST_SAFE_MODE", raising=False)
+    monkeypatch.setattr(current_runtime(), "desktop_provider", SimpleNamespace(name=provider))
 
     created = AgentState(run_id="run-desktop", intent="Desktop task", status=RunStatus.PENDING)
     run_store = Mock()
@@ -468,9 +482,48 @@ async def test_agent_loop_start_run_runs_reset_desktop_in_desktop_mode(
         environment=UnifiedEnvironment.DESKTOP,
     )
 
+    await loop.start_run(
+        RunTaskRequest(intent="Open Notepad.", clear_desktop=clear_desktop, benchmark=benchmark)
+    )
+
+    assert executor.reset_desktop.await_count == (1 if expected else 0)
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_start_run_uses_settings_environment_without_a_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no provider built yet, the OPERON_ENVIRONMENT setting decides (default live: no Win+D)."""
+    from operon.core.contracts.perception import Environment as UnifiedEnvironment
+    from operon.core.runtime import current_runtime
+
+    monkeypatch.delenv("OPERON_TEST_SAFE_MODE", raising=False)
+    monkeypatch.setattr(current_runtime(), "desktop_provider", None)
+    monkeypatch.delenv("OPERON_ENVIRONMENT", raising=False)
+
+    run_store = Mock()
+    run_store.root_dir = None
+    run_store.create_run = Mock(
+        return_value=AgentState(run_id="run-desktop", intent="Desktop task", status=RunStatus.PENDING)
+    )
+    executor = Mock()
+    executor.reset_desktop = AsyncMock()
+    executor.configure_run = Mock()
+    executor.start_run_recording = AsyncMock()
+    loop = AgentLoop(
+        capture_service=Mock(),
+        perception_service=Mock(),
+        run_store=run_store,
+        policy_service=Mock(),
+        executor=executor,
+        verifier_service=Mock(),
+        recovery_manager=Mock(),
+        environment=UnifiedEnvironment.DESKTOP,
+    )
+
     await loop.start_run(RunTaskRequest(intent="Open Notepad."))
 
-    executor.reset_desktop.assert_awaited_once()
+    executor.reset_desktop.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1415,6 +1468,8 @@ def _expect_loop(tmp_path):
     loop.perception_service = MagicMock()
     loop._recovered_errors = {}
     loop._expect_reminded = {}
+    loop._pending_start_urls = {}
+    loop._opening_start_urls = set()
     loop._secret_site_approved = {}
     loop._dialog_pauses = {}
     loop._dialog_approved = {}

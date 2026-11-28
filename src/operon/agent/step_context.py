@@ -49,6 +49,8 @@ class StepContext:
     step_index: int
     before_artifact_path: str
     after_artifact_path: str
+    # True once an executor really wrote an after screenshot; the log names the path only then.
+    after_captured: bool = False
     # Per-stage durations in milliseconds, written to step_timing.json at the end.
     stage_timings: dict[str, float] = field(default_factory=dict)
     # When the step began: wall-clock UTC for the log, and a monotonic clock for its duration.
@@ -68,6 +70,14 @@ class StepContext:
     # Decide.
     decision: PolicyDecision = field(init=False)
     policy_debug: ModelDebugArtifacts = field(init=False)
+
+    # Gates a person approved for this action, captured before the gate stage uses the approval up (KAN-207).
+    approved_gates: frozenset[str] = frozenset()
+
+    # Fresh look (KAN-207), taken in the gate stage: whether a screenshot was grabbed, and the failed
+    # result that replaces the action when its target spot changed.
+    fresh_look_ran: bool = False
+    fresh_look_stale: ExecutedAction | None = None
 
     # Execute / verify.
     executed_action: ExecutedAction | None = None

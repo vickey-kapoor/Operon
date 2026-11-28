@@ -56,14 +56,14 @@ methods over a `StepContext` (`agent/step_context.py`, KAN-155). Fields a stage 
 | Order | Stage (`agent/loop.py`) | What it does |
 |---|---|---|
 | 0 | `_begin_step` | Refuses runs that are not PENDING or RUNNING; enforces `max_steps` (default 25, `models/common.py`); builds the `StepContext` |
-| 1 | `_warmup_stage` | Step 1 only: a browser run without a start URL navigates to google.com if the trust gate allows it; 2.5 s settle (skipped in test safe mode) |
+| 1 | `_warmup_stage` | Step 1 only: a browser run without a start URL navigates to google.com if the trust gate allows it; 2.5 s settle, or with `OPERON_SETTLE_DETECT` on a wait until the screen is still (at most the larger of `OPERON_SETTLE_MAX_S` and 2.5 s, KAN-203; `OPERON_CHANGE_NOTE` alone keeps the fixed wait); skipped in test safe mode |
 | 1b | `_consume_force_fresh_perception` | When the run record has `force_fresh_perception` set, waits for the UI to settle (1.0 s in a browser, 0.5 s on the desktop; `OPERON_SETTLE_DETECT` swaps the fixed sleep for settle detection), then clears the flag |
 | 2 | `_capture_stage` | `ScreenCaptureService.capture` (`agent/perception/capture.py`) asks the executor for a frame and moves it to `step_N/before.png` |
 | 3 | `_consume_override_hint`, `_add_task_note`, `_add_secrets_hint` | Queue advisory text hints for the model: a user correction, `OPERON_TASK_NOTE`, secret names |
 | 4 | `_perceive_stage` | Memory hints, then `perception_service.perceive` (with a liveness retry); stamps the monitor origin; saves the observation |
 | 5 | `_decide_stage` | `policy_service.choose_action`; `_attach_target_context` (monitor origin) |
 | 6 | `_gate_stage` | Cancel check, then `_gate_pause_decision`: the model asked for a human, coordinate thrash (3 failures at one point), confidence threshold, trust gate, file guard. A blocked action becomes WAIT_FOR_USER and the run pauses |
-| 7 | `_execute_and_verify_stage` | `_execute_action` once (no retry), then `verifier_service.verify` and the change note |
+| 7 | `_execute_and_verify_stage` | with `OPERON_FRESH_LOOK` on, a fresh look at the target spot first (changed: the action is not run, KAN-207); then `_execute_action` once (no retry), then `verifier_service.verify` and the change note |
 | 8 | `_recover_stage` | `recovery_manager.recover`, then `validate_benchmark_integrity`; progress tracking and `progress_trace.json` |
 | 9 | `_record_step_stage`, `_finish_step_stage` | Writes the `StepLog` to `run.jsonl`; sets SUCCEEDED, FAILED, RUNNING, CANCELLED or WAITING_FOR_USER; applies CONTEXT_RESET and SESSION_RESET side effects; writes `step_timing.json`; on a terminal status writes `efficiency.json` |
 
@@ -103,7 +103,7 @@ A Gemini computer-use click in batch browser mode:
 7. **Verify.** `OwnDoneVerifier.verify` (`agent/policy/thin.py`) returns SUCCESS for an executed
    action and for the model's own "done" (unchecked; graders decide), UNCERTAIN for a failed
    action, and FAILURE when the model gave up.
-8. **Recover.** `ThinRecovery` (`agent/policy/thin.py`) advances, or stops on the model's own done.
+8. **Recover.** `ThinRecovery` (`agent/policy/thin.py`) advances, or stops on the model's own done or after 3 replies in a row with words only and no action (KAN-204).
 9. **Persist.** The step log, progress trace and run state are written (see
    [Persistence](#persistence)).
 
@@ -143,10 +143,10 @@ in `api/runtime/loops.py:_loop_layers` for every backend (Gemini `computer_use` 
 |---|---|
 | Policy | `ThinPolicy`: the backend's decision unchanged |
 | Verifier | `OwnDoneVerifier`: failures go back to the model as tool results; the model's "done" ends the run, unchecked |
-| Recovery | `ThinRecovery`: always hand back to the model, or stop on its own done |
+| Recovery | `ThinRecovery`: hand back to the model, or stop on its own done or after 3 word-only replies in a row |
 | Loop | No retries, no redundant-action blocking, no grounder refinement |
 
-The trust gate, file guard, coordinate-thrash pause and step budget stay. Advisory text (task
+The trust gate, file guard, coordinate-thrash pause, step budget and word-only stop stay. Advisory text (task
 note, secret names, change note) is allowed because it changes what the model sees, not its
 action.
 
@@ -244,7 +244,7 @@ No second model judges a "done". The benchmark graders (app state, request logs)
 ## Recovery
 
 `ThinRecovery` (`src/operon/agent/policy/thin.py`) is the only recovery manager: it advances after
-every step and stops only on the model's own "done". The earlier retry ladder (retry, new tactic,
+every step and stops only on the model's own "done", or when the model has replied with words only and no action 3 times in a row (`model_only_talked`, KAN-204; the run ends FAILED with the model's last words as the reason). The earlier retry ladder (retry, new tactic,
 context reset, session reset) was removed (KAN-183); the `RecoveryManager` interface and the
 `CONTEXT_RESET` and `SESSION_RESET` strategies remain.
 
@@ -330,6 +330,7 @@ installed with pip (`OPERON_RUNTIME_ROOT`, `OPERON_RUNS_ROOT`):
     policy_decision.json  verification_result.json  perception_parsed.json
     execution_trace.json  progress_trace.json  step_timing.json
     task_note.txt   (when that feature is on)
+    done_check.json  (when OPERON_DONE_CHECK asked for an independent check of a done)
 ```
 
 Memory is stored under `memory/` when enabled by the store:
@@ -384,10 +385,12 @@ Experimental work ships behind an env flag that defaults to off. Defaults are fr
 |---|---|---|
 | `OPERON_PARALLEL_RUNS` | 1 | Batch browser runs that may step at once, each with its own Chromium |
 | `OPERON_SETTLE_DETECT` / `OPERON_SETTLE_MAX_S` | off / 3.0 | Wait for the screen to stop changing instead of a fixed sleep |
+| `OPERON_FRESH_LOOK` | off | Fresh screenshot just before a pointer action; skip it when the spot around the target changed (KAN-207) |
 | `OPERON_CHANGE_NOTE` | off | One text line about what changed while the screen settled |
 | `OPERON_FOCUS_GUARD` | off | Skip the first action after a capture if focus was stolen (Windows) |
 | `OPERON_DPI_AWARE` | off | Per-monitor-v2 DPI awareness before `pyautogui` loads (Windows) |
 | `OPERON_PLANNER` / `OPERON_PLANNER_MODEL` | off / `gemini-3.5-flash-lite` | One text-only plan at task start |
+| `OPERON_DONE_CHECK` / `OPERON_DONE_CHECK_MODEL` | off / `gemini-3.5-flash` | One independent check of the model's done: a rejection is a hint, at most 2 checks per run |
 | `OPERON_TASK_NOTE` / `OPERON_TASK_NOTE_MAX_ITEMS` | off / 8 | A running task-state note with each step, no model call |
 | `OPERON_CHECKPOINTS` | off | Mark interrupted runs at startup; resume on request |
 | `OPERON_PROGRESS_REVISIT` | off | A repeated action counts as progress only if its after-screen is new; the thin harness only records the loop in `progress_trace.json` |

@@ -1,6 +1,6 @@
-"""One-job runners for the Azure benchmark VMs and the fork PR workflow check (KAN-195).
+"""One-job runners for the benchmark VMs (KAN-195; OSWorld on Google Cloud, KAN-224) and the fork PR workflow check.
 
-Offline: the workflow files are parsed, and jit-runner.sh runs against stub `curl` and `az` on PATH.
+Offline: the workflow files are parsed, and jit-runner.sh runs against stub `curl`, `az` and `gcloud` on PATH.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ needs_bash = pytest.mark.skipif(
 
 @pytest.fixture
 def stubs(tmp_path: Path) -> dict:
-    """PATH with a fake curl (GitHub API) and az; every call is logged."""
+    """PATH with a fake curl (GitHub API), az and gcloud; every call is logged."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     calls = tmp_path / "calls.log"
@@ -102,7 +102,17 @@ while [ $# -gt 0 ]; do
 done
 echo "${{FAKE_AZ_OUTPUT-operon-jit-runner-started {LABEL}}}"
 """
-    for name, body in (("curl", curl), ("az", az)):
+    # FAKE_GCLOUD_FAIL names a gcloud verb (add-metadata, remove-metadata) that fails.
+    gcloud = f"""#!/bin/bash
+echo "gcloud $*" >> "{calls}"
+verb="$3"
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--metadata-from-file" ]; then cp "${{2#operon-jit-script=}}" "{script_copy}"; fi
+  shift
+done
+if [ "$verb" = "${{FAKE_GCLOUD_FAIL-}}" ]; then echo "gcloud failed" >&2; exit 1; fi
+"""
+    for name, body in (("curl", curl), ("az", az), ("gcloud", gcloud)):
         path = bin_dir / name
         path.write_text(body)
         path.chmod(path.stat().st_mode | stat.S_IEXEC)
@@ -195,6 +205,71 @@ def test_start_fails_when_the_runner_never_comes_online(stubs: dict) -> None:
     assert "did not come online" in result.stderr
 
 
+GCP = {"VM_CLOUD": "gcp", "GCP_ZONE": "us-central1-a", "GCP_PROJECT": "proj", "RESOURCE_GROUP": ""}
+
+
+def _gcloud_calls(stubs: dict) -> list[str]:
+    path = Path(stubs["calls"])
+    return [line for line in path.read_text().splitlines() if line.startswith("gcloud ")] if path.exists() else []
+
+
+@needs_bash
+def test_start_on_google_cloud_delivers_the_script_through_metadata_and_removes_it(stubs: dict) -> None:
+    result = _run(stubs, "start", "linux", LABEL, "operon-osworld", **GCP)
+    assert result.returncode == 0, result.stderr
+    assert "online" in result.stdout
+    script = stubs["script"].read_text()
+    assert script.startswith(f"JIT_CONFIG='{CONFIG}'\nRUNNER_LABEL='{LABEL}'\n")
+    assert "systemd-run" in script  # the same vm-linux.sh the Azure path sends
+    calls = _gcloud_calls(stubs)
+    assert len(calls) == 2
+    add, remove = calls
+    assert add.startswith("gcloud compute instances add-metadata vm --zone us-central1-a --project proj --metadata-from-file operon-jit-script=")
+    assert remove == "gcloud compute instances remove-metadata vm --zone us-central1-a --project proj --keys operon-jit-script"
+    log = Path(stubs["calls"]).read_text()
+    assert CONFIG not in log and TOKEN not in log  # the config travels in a file, never in a command line
+    assert "az " not in log
+    assert "--log-http" not in log and "--verbosity" not in log
+
+
+@needs_bash
+def test_start_on_google_cloud_removes_the_script_when_the_runner_never_comes_online(stubs: dict) -> None:
+    runners = json.loads((stubs["calls"].parent / "runners.json").read_text())
+    runners["runners"][2]["status"] = "offline"
+    (stubs["calls"].parent / "runners.json").write_text(json.dumps(runners))
+    result = _run(stubs, "start", "linux", LABEL, "operon-osworld", RUNNER_ONLINE_TIMEOUT="1", RUNNER_POLL_INTERVAL="1", **GCP)
+    assert result.returncode != 0
+    assert "did not come online" in result.stderr
+    assert "remove-metadata" in _gcloud_calls(stubs)[-1]
+
+
+@needs_bash
+@pytest.mark.parametrize("verb", ["add-metadata", "remove-metadata"])
+def test_start_on_google_cloud_fails_when_a_metadata_call_fails(stubs: dict, verb: str) -> None:
+    result = _run(stubs, "start", "linux", LABEL, "operon-osworld", FAKE_GCLOUD_FAIL=verb, **GCP)
+    assert result.returncode != 0
+    # The key is taken off even when putting it on failed.
+    assert "remove-metadata" in _gcloud_calls(stubs)[-1]
+    if verb == "remove-metadata":
+        assert "could not remove the runner script" in result.stderr
+
+
+@needs_bash
+def test_start_on_google_cloud_takes_linux_only_and_needs_zone_and_project(stubs: dict) -> None:
+    assert _run(stubs, "start", "windows", LABEL, "operon-desktop", **GCP).returncode != 0
+    assert _run(stubs, "start", "linux", LABEL, "operon-osworld", **{**GCP, "GCP_ZONE": ""}).returncode != 0
+    assert _run(stubs, "start", "linux", LABEL, "operon-osworld", VM_CLOUD="aws").returncode != 0
+    assert _gcloud_calls(stubs) == []
+    assert not stubs["script"].exists()
+
+
+@needs_bash
+def test_start_on_azure_still_needs_the_resource_group(stubs: dict) -> None:
+    result = _run(stubs, "start", "windows", LABEL, "operon-desktop", RESOURCE_GROUP="")
+    assert result.returncode != 0
+    assert "RESOURCE_GROUP" in result.stderr
+
+
 @needs_bash
 def test_remove_deletes_the_runner_with_that_name_only(stubs: dict) -> None:
     result = _run(stubs, "remove", LABEL)
@@ -206,7 +281,10 @@ def test_remove_deletes_the_runner_with_that_name_only(stubs: dict) -> None:
 def test_vm_templates_hand_over_the_config_only_through_a_locked_file() -> None:
     linux = (ROOT / "scripts" / "bench-runners" / "vm-linux.sh").read_text()
     windows = (ROOT / "scripts" / "bench-runners" / "vm-windows.ps1").read_text()
-    assert "chmod 600" in linux and "--jitconfig" in linux
+    assert "chmod 600" in linux
+    # The runner reads the config from its unit's environment, not from its command line (KAN-224).
+    assert "export ACTIONS_RUNNER_INPUT_JITCONFIG; exec ./run.sh'" in linux
+    assert "--jitconfig \"" not in linux
     assert "icacls" in windows and "/inheritance:r" in windows
     # On Windows the logon task starts the runner: it reads and deletes that file, and nothing registers a lasting runner.
     setup = (ROOT / "scripts" / "azure-desktop-runner" / "setup-runner.ps1").read_text()

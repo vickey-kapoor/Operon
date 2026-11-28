@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# One-time (and safe to repeat) setup of the OSWorld benchmark VM, operon-linux (KAN-169).
-# Run it on the VM as the login user. The "Run OSWorld test tasks (own VM)" workflow calls it before each run
+# One-time (and safe to repeat) setup of the OSWorld benchmark VM, operon-osworld on Google Cloud (KAN-169, KAN-224).
+# Run it on the VM as the runner user (infra/gcp/startup.sh installs Docker, Python and git and makes that user). The "Run OSWorld test tasks (own VM)" workflow calls it before each run
 # so a fresh VM or a changed requirements file is handled; a second run finds everything in place.
 #
 # Layout under $HOME:

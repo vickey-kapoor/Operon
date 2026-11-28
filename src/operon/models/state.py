@@ -13,6 +13,22 @@ from operon.models.progress import ProgressState
 from operon.models.verification import VerificationResult
 
 
+class PendingApproval(StrictModel):
+    """What a paused run waits on from the person (KAN-226), saved so a restart keeps it.
+    Gate fields are None for a model-confirmation pause, which has an audit event and no gate."""
+
+    fingerprint: str | None = None
+    gate: str | None = None
+    category: str = ""
+    verdict: str = ""
+    start_url: str | None = None
+    audit: dict[str, str | int] | None = None
+    reason: str | None = None
+    # A page dialog the executor cancelled (KAN-172): its kind and message.
+    dialog_kind: str | None = None
+    dialog_message: str | None = None
+
+
 class AgentState(StrictModel):
     """Local typed state stored for a single agent run."""
 
@@ -29,6 +45,9 @@ class AgentState(StrictModel):
     action_history: list[ExecutedAction] = Field(default_factory=list)
     verification_history: list[VerificationResult] = Field(default_factory=list)
     retry_counts: dict[str, int] = Field(default_factory=dict)
+    # KAN-208: the independent checks of the model's "done" (OPERON_DONE_CHECK): how many ran
+    # ("checked") and how they came out ("accepted", "rejected", "error").
+    done_checks: dict[str, int] = Field(default_factory=dict)
     # KAN-158: errors the loop caught and carried on from, by site (see
     # AgentLoop._recovered); reported per task by the live benchmarks.
     recovered_errors: dict[str, int] = Field(default_factory=dict)
@@ -59,11 +78,16 @@ class AgentState(StrictModel):
     permission_mode: str | None = Field(default=None, pattern=r"^(ask|risky|auto)$")
     # True while the person has taken over the screen; no step runs until they hand back.
     in_takeover: bool = False
+    # KAN-204: how many replies in a row had words only and no action (reset by any action
+    # or by a person's answer). The thin recovery stops the run at 3.
+    words_only_streak: int = Field(default=0, ge=0)
     takeover_count: int = Field(default=0, ge=0)
     # Gate pauses the person approved.
     approval_count: int = Field(default=0, ge=0)
     # Why the run is paused for the person (the gate's or the model's own words).
     pause_reason: str | None = None
+    # KAN-226: what the pause waits on, so an approval survives a restart; None otherwise.
+    pending_approval: PendingApproval | None = None
     # OPERON_CHECKPOINTS (KAN-80): what the run was doing when the process died (running,
     # pending or waiting_for_user), kept while stop_reason is "interrupted". A run that
     # was waiting for the person re-pauses on resume instead of continuing.

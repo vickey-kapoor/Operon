@@ -8,11 +8,17 @@ rule-based "full" harness; this is the only harness):
   post-model guards in front of it.
 - ``OwnDoneVerifier`` lets a failed action stand as the model's tool result and
   takes the model's "done" as the end of the run; graders decide success.
-- ``ThinRecovery`` always hands the next step back to the model; the run's step
-  budget and the model's own "done" are the only stops.
+- ``ThinRecovery`` hands the next step back to the model. The run ends on the model's own
+  "done", on the step budget, or when the model has replied with words only and no action
+  ``WORDS_ONLY_LIMIT`` times in a row (KAN-204). That last stop changes nothing the model
+  does: it only ends a run that is going nowhere.
 
-Safety gates (trust gate, file roots, coordinate-thrash pause, max steps) stay in
-the loop.
+With ``OPERON_DONE_CHECK`` on (experimental, KAN-208) the loop asks one independent check of a
+"done" (``agent/done_check.py``). A rejection is only a hint on the next step: the model's
+action is never replaced, and after two checks the model's done stands.
+
+Safety gates (trust gate, file roots, coordinate-thrash pause, max steps, the word-only
+stop) stay in the loop.
 """
 
 from __future__ import annotations
@@ -37,6 +43,11 @@ THIN = "thin"
 # (Claude, GPT; src/operon/agent/backends/model_adapter/models.yaml).
 GEMINI_COMPUTER_USE = "computer_use"
 MODEL_BACKEND = "model"
+
+# KAN-204: replies in a row with words only (a question, a refusal) and no action that
+# end the run. Like max steps, this is a stop, not a rule about what the model does.
+WORDS_ONLY_LIMIT = 3
+_WORDS_SHOWN = 350
 
 
 class ThinPolicy(PolicyService):
@@ -65,7 +76,8 @@ class OwnDoneVerifier(VerifierService):
     decide success afterwards, which makes a false success a clean metric. Every other
     step passes through: a failed action is reported to the model as its tool result by
     the backend, not retried here. A ``fail`` (rationale starting with ``gave_up_prefix``)
-    ends the run as not done."""
+    ends the run as not done. (With ``OPERON_DONE_CHECK`` on, the loop may ask one independent
+    check of a "done" after this verdict; see ``agent/done_check.py``.)"""
 
     def __init__(self, *, gave_up_prefix: str = "Model gave up: ") -> None:
         self.gave_up_prefix = gave_up_prefix
@@ -118,7 +130,8 @@ class OwnDoneVerifier(VerifierService):
 
 
 class ThinRecovery(RecoveryManager):
-    """The model chooses the next step; only its own "done" (or the step budget) ends the run."""
+    """The model chooses the next step. Its own "done", the step budget, or ``WORDS_ONLY_LIMIT``
+    replies in a row with words only and no action end the run."""
 
     async def recover(
         self,
@@ -137,6 +150,21 @@ class ThinRecovery(RecoveryManager):
                 # None on a normal "done"; MODEL_GAVE_UP when the model gave up (KAN-175).
                 failure_category=verification.failure_category,
                 failure_stage=verification.failure_stage,
+            )
+        if decision.words_only is not None and state.words_only_streak >= WORDS_ONLY_LIMIT:
+            words = decision.words_only.strip()
+            shown = words if len(words) <= _WORDS_SHOWN else words[:_WORDS_SHOWN].rstrip() + "..."
+            return RecoveryDecision(
+                strategy=RecoveryStrategy.STOP,
+                message=(
+                    f"The model replied {WORDS_ONLY_LIMIT} times in a row without taking any action, "
+                    f'so the run stopped. Its last reply: "{shown or "(no text)"}"'
+                ),
+                terminal=True,
+                recoverable=False,
+                stop_reason=StopReason.MODEL_ONLY_TALKED,
+                failure_category=FailureCategory.MODEL_ONLY_TALKED,
+                failure_stage=LoopStage.CHOOSE_ACTION,
             )
         return RecoveryDecision(
             strategy=RecoveryStrategy.ADVANCE,

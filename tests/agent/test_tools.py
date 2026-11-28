@@ -567,7 +567,7 @@ def test_services_declare_the_tools_and_the_loop_wraps_the_executor(monkeypatch)
     monkeypatch.setenv("OPERON_DESKTOP_BACKEND", "computer_use")
     backend = services.build_desktop_services().policy_delegate
     declared = [d["name"] for d in backend.client.function_declarations]
-    assert declared == ["launch_app", *tools.TOOL_NAMES] and backend.tools == tools.TOOL_NAMES
+    assert declared == ["launch_app", *tools.TOOL_NAMES, "give_up"] and backend.tools == tools.TOOL_NAMES
 
     class Config:
         backend = "computer_use"

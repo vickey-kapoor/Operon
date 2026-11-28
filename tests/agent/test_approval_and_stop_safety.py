@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -330,3 +331,191 @@ async def test_start_url_inside_the_allowlist_opens(monkeypatch: pytest.MonkeyPa
     await loop.start_run(RunTaskRequest(intent="Look around", start_url="https://shop.example.com/"))
 
     assert [c.args[0].url for c in execute.call_args_list] == ["https://shop.example.com/"]
+
+
+# KAN-191: a non-web start_url is refused outright, trust gate on or off.
+
+
+@pytest.mark.parametrize("gate", [TrustGate(enabled=False), TrustGate(enabled=True)])
+@pytest.mark.parametrize("url", ["file:///C:/Users/x/.ssh/id_rsa", "javascript:alert(1)", "example.com"])
+async def test_non_web_start_url_is_refused(monkeypatch: pytest.MonkeyPatch, gate: TrustGate, url: str) -> None:
+    loop, execute, _ = _loop(monkeypatch, [SAFE])
+    loop._trust_gate = gate
+    loop.run_store.create_run = lambda **_: pytest.fail("run must not be created")
+
+    with pytest.raises(StartUrlBlockedError, match="only http and https"):
+        await loop.start_run(RunTaskRequest(intent="Look around", start_url=url))
+
+    execute.assert_not_called()
+
+
+# KAN-197: a start_url the trust gate or the permission mode wants approved waits for the person.
+
+CONFIRM_GATE = TrustGate(enabled=True, confirm=("checkout",))
+CHECKOUT_URL = "https://shop.example.com/checkout"
+
+
+async def _start_paused(monkeypatch: pytest.MonkeyPatch, *, gate: TrustGate = CONFIRM_GATE, mode: str | None = None):
+    from operon.agent import hitl
+
+    monkeypatch.setattr(hitl, "notify_desktop", lambda **_: None)
+    loop, execute, state = _loop(monkeypatch, [SAFE])
+    loop._trust_gate = gate
+    loop.run_store.create_run = lambda **_: state
+    hints: list[str] = []
+    loop.perception_service.add_advisory_hints = lambda items, **_: hints.extend(items)
+    response = await loop.start_run(
+        RunTaskRequest(intent="Look around", start_url=CHECKOUT_URL, permission_mode=mode)
+    )
+    return loop, execute, state, response, hints
+
+
+async def test_start_url_needing_approval_pauses_before_it_opens(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, state, response, _ = await _start_paused(monkeypatch)
+
+    assert response.status is RunStatus.WAITING_FOR_USER
+    execute.assert_not_called()
+    assert loop.pending_gate("run-1") == "trust"
+    assert loop.pending_gate_verdict("run-1") == "confirm"
+    assert CHECKOUT_URL in (state.pause_reason or "")
+
+
+async def test_approving_the_start_url_opens_it_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, state, _, _ = await _start_paused(monkeypatch)
+
+    resumed = await loop.resume_run("run-1")
+
+    assert resumed.status is RunStatus.RUNNING
+    assert [c.args[0].url for c in execute.call_args_list] == [CHECKOUT_URL]
+    assert state.approval_count == 1
+    # The yes was for opening the start page only: no later action is pre-approved.
+    assert "run-1" not in loop._approved_gate_actions
+    assert loop.pending_gate("run-1") is None
+
+
+async def test_declining_the_start_url_leaves_it_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, state, _, hints = await _start_paused(monkeypatch)
+
+    resumed = await loop.resume_run("run-1", approve_gated_action=False)
+
+    assert resumed.status is RunStatus.RUNNING
+    execute.assert_not_called()
+    assert state.approval_count == 0
+    assert any("did not approve opening the start page" in hint for hint in hints)
+
+
+async def test_ask_mode_asks_before_the_start_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, _, response, _ = await _start_paused(monkeypatch, gate=TrustGate(enabled=True), mode="ask")
+
+    assert response.status is RunStatus.WAITING_FOR_USER
+    execute.assert_not_called()
+    assert loop.pending_gate("run-1") == "trust"
+
+
+async def test_auto_mode_opens_a_confirm_start_url_unasked(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, _, response, _ = await _start_paused(monkeypatch, mode="auto")
+
+    assert response.status is not RunStatus.WAITING_FOR_USER
+    assert [c.args[0].url for c in execute.call_args_list] == [CHECKOUT_URL]
+    assert loop.pending_gate("run-1") is None
+
+
+async def test_start_url_pause_notifies_the_person_like_any_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    from operon.agent import hitl
+
+    loop, _, _, _, _ = await _start_paused(monkeypatch)
+    await asyncio.sleep(0)  # let the webhook task start
+
+    hitl.post_hitl_webhook.assert_awaited_once()
+    assert hitl.post_hitl_webhook.await_args.kwargs["url"] == CHECKOUT_URL
+
+
+async def test_a_stop_while_approving_never_opens_the_start_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop, execute, state, _, _ = await _start_paused(monkeypatch)
+
+    async with loop._executor_lock:  # another run's step holds the executor
+        approving = asyncio.create_task(loop.resume_run("run-1"))
+        await asyncio.sleep(0.01)
+        state.status = RunStatus.CANCELLED  # stopped while the approval waited
+    await approving
+
+    execute.assert_not_called()
+    assert state.status is RunStatus.CANCELLED
+
+
+async def test_a_takeover_while_the_approval_waits_never_navigates_under_the_person(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop, execute, state, _, _ = await _start_paused(monkeypatch)
+
+    async with loop._executor_lock:  # another run's step holds the executor
+        approving = asyncio.create_task(loop.resume_run("run-1"))
+        await asyncio.sleep(0.01)
+        # The takeover must wait for the approval's turn: it never returns "you are in
+        # control" while the page is still to be opened.
+        taking_over = asyncio.create_task(loop.take_over("run-1"))
+        await asyncio.sleep(0.01)
+        assert not taking_over.done()
+    await approving
+    try:
+        await taking_over
+    except ValueError:
+        pass  # the approval already handed the run back to the agent
+
+    if state.in_takeover:
+        assert state.status is RunStatus.WAITING_FOR_USER
+    else:
+        assert execute.call_count == 1
+
+
+@pytest.mark.parametrize("fails", ["result", "raise"])
+async def test_an_approved_start_url_that_fails_to_open_is_told_to_the_model(
+    monkeypatch: pytest.MonkeyPatch, fails: str
+) -> None:
+    loop, execute, _, _, hints = await _start_paused(monkeypatch)
+
+    async def failing(action: AgentAction) -> ExecutedAction:
+        if fails == "raise":
+            raise RuntimeError("browser gone")
+        return ExecutedAction(action=action, success=False, detail="net::ERR_NAME_NOT_RESOLVED")
+
+    execute.side_effect = failing
+    if fails == "raise":
+        monkeypatch.setattr(loop, "_recovered", lambda *_: None)  # tests re-raise recovered errors
+    await loop.resume_run("run-1")
+
+    assert any("failed to open" in hint for hint in hints)
+
+
+async def test_a_takeover_while_the_start_url_loads_keeps_the_person_in_control(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop, execute, state, _, _ = await _start_paused(monkeypatch)
+    loading = asyncio.Event()
+    finish = asyncio.Event()
+
+    async def slow_open(action: AgentAction) -> ExecutedAction:
+        loading.set()
+        await finish.wait()
+        return ExecutedAction(action=action, success=True, detail="ok")
+
+    execute.side_effect = slow_open
+    approving = asyncio.create_task(loop.resume_run("run-1"))
+    await loading.wait()
+
+    # A second answer while the page loads is refused, not run early.
+    with pytest.raises(ValueError, match="start page is opening"):
+        await loop.resume_run("run-1", approve_gated_action=False)
+
+    # The takeover waits for the page load to end instead of handing over mid-navigation.
+    taking_over = asyncio.create_task(loop.take_over("run-1"))
+    await asyncio.sleep(0.01)
+    assert not taking_over.done()
+    finish.set()
+    await approving
+    await taking_over  # completes without error: the takeover wins over the approval's resume
+
+    assert state.in_takeover is True
+    assert state.status is RunStatus.WAITING_FOR_USER
+    # The agent did not step: the only action ever executed is the start page itself.
+    assert [c.args[0].url for c in execute.call_args_list] == [CHECKOUT_URL]

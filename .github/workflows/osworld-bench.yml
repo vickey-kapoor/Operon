@@ -2,15 +2,19 @@
 #
 # Started by hand (Actions > Run OSWorld test tasks (own VM) > Run workflow) or as a cell of the paid-run
 # batch (benchmark.yml, KAN-184); it always runs the default branch. It spends model credits, so nothing starts it for you: you pick how many
-# tasks and the cost cap. Steps: start the Linux VM
-# operon-linux, run `python -m evals.osworld` on it (a self-hosted runner; setup is in
-# docs/osworld-runner.md), upload the report, deallocate the VM. The runner is a one-job (JIT) runner
+# tasks and the cost cap. Steps: start the Google Cloud VM
+# operon-osworld (KAN-224, made by infra/gcp), run `python -m evals.osworld` on it (a self-hosted runner; setup is in
+# docs/osworld-runner.md), upload the report, stop the VM. The runner is a one-job (JIT) runner
 # minted by start-vm under a label unique to this run (KAN-195), so no lasting runner on the VM can pick up any other job. The bench job's timeout is sized to the
 # tasks chosen (`python -m evals.osworld --job-minutes`, computed in start-vm: 30 min + 35 min a task), not a flat number.
 #
 # Needs repo secret RUNNER_ADMIN_TOKEN (fine-grained token, this repo only, Administration read+write: it mints and deletes
-# the one-job runner) and repo secret GEMINI_API_KEY (ANTHROPIC_API_KEY / OPENAI_API_KEY for a `model` run) and the Azure OIDC variables the desktop bench already uses.
+# the one-job runner) and the repo variables GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT (Terraform outputs of infra/gcp).
+# The model keys GEMINI_API_KEY, ANTHROPIC_API_KEY and OPENAI_API_KEY are secrets of the `paid-runs` environment (KAN-282):
+# start-vm and bench each wait for Vickey's Approve, so a run needs two Approve clicks. After the first click the VM is up
+# and bills (about $0.20 an hour) until the second: press it right away, or Reject to stop the VM.
 # Cost: Gemini about $0.12 a task (the last full 25-task run was $3.11); Claude or GPT about $0.12-0.24 a task.
+# The VM (n2-standard-4 and its address) is about $0.20 an hour while a run is going; its 150 GB disk about $15 a month.
 # The cap is checked between tasks, so a run can overshoot by one task.
 name: Run OSWorld test tasks (own VM)
 
@@ -34,6 +38,16 @@ on:
         type: choice
         default: ""
         options: ["", claude-sonnet-5-5, openai-computer-use]
+      done_check:
+        description: "OPERON_DONE_CHECK (KAN-208): one independent check of the model's done; adds a small Gemini call per done"
+        type: choice
+        default: "off"
+        options: ["off", "on"]
+      dry_run:
+        description: "Check the keys and stop: no VM start, no model call (KAN-282 gate check)"
+        type: choice
+        default: "false"
+        options: ["false", "true"]
   # Called by benchmark.yml for an osworld batch cell (KAN-184).
   workflow_call:
     inputs:
@@ -43,11 +57,17 @@ on:
       max_steps: {type: string, default: "50"}
       # A registry model profile (KAN-168) instead of Gemini; empty = Gemini.
       model: {type: string, default: ""}
+      # OPERON_DONE_CHECK (KAN-208): "on" or "off".
+      done_check: {type: string, default: "off"}
       # Set by the paid-run workflow (benchmark.yml) so its cells' artifacts do not share a name.
       artifact_suffix: {type: string, default: ""}
       # benchmark.yml keeps the videos of all its cells in one release itself, so it passes "false".
       publish_videos: {type: string, default: "true"}
+      # "true": check the keys and stop before the VM starts (KAN-282 gate check; gate-dryrun.yml).
+      dry_run: {type: string, default: "false"}
     secrets:
+      # The caller passes the model keys by name; the values come from the paid-runs environment of the jobs below
+      # (empty for a job without that environment once the repo secrets are deleted).
       GEMINI_API_KEY: {required: false}
       ANTHROPIC_API_KEY: {required: false}
       OPENAI_API_KEY: {required: false}
@@ -57,33 +77,59 @@ on:
 permissions:
   contents: read
 
-# One run on the VM at a time: a finished run deallocates it.
+# One run on the VM at a time: a finished run stops it.
 concurrency:
-  group: azure-osworld-vm
+  group: gcp-osworld-vm
   cancel-in-progress: false
 
 jobs:
   start-vm:
-    name: Start the Azure VM
+    name: Start the Google Cloud VM
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # A VM's first start installs Docker and the runner before it takes the runner (RUNNER_ONLINE_TIMEOUT below).
+    timeout-minutes: 25
+    # Waits for Vickey's Approve (KAN-282) before the VM, which costs per hour, is started. Once it is up, bench waits
+    # for a second Approve while the VM bills: approve it right away, or Reject to stop the VM.
+    environment: paid-runs
     permissions:
       contents: read
       id-token: write
     env:
-      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
-      VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-linux' }}
+      VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-osworld' }}
+      GCP_ZONE: ${{ vars.OSWORLD_GCP_ZONE || 'us-central1-a' }}
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID || 'propane-cubist-479515-c5' }}
       LIMIT: ${{ inputs.limit }}
       ONLY: ${{ inputs.only }}
     outputs:
       bench_minutes: ${{ steps.minutes.outputs.minutes }}
       runner_label: ${{ steps.label.outputs.label }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # An empty key fails here, before the VM starts and bills. The keys are in this step's env only, and a provider's
+      # key is there only when the run uses that provider's model (the same gating as the bench job).
+      - name: Check the model key
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ startsWith(inputs.model, 'claude') && secrets.ANTHROPIC_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ startsWith(inputs.model, 'openai') && secrets.OPENAI_API_KEY || '' }}
+          MODEL: ${{ inputs.model }}
+        run: |
+          missing=""
+          if [ -z "$GEMINI_API_KEY" ]; then missing="GEMINI_API_KEY"; fi
+          case "$MODEL" in
+            claude*) if [ -z "$ANTHROPIC_API_KEY" ]; then missing="$missing ANTHROPIC_API_KEY"; fi;;
+            openai*) if [ -z "$OPENAI_API_KEY" ]; then missing="$missing OPENAI_API_KEY"; fi;;
+          esac
+          if [ -n "$missing" ]; then
+            echo "::error::Missing from the paid-runs environment:$missing."; exit 1
+          fi
+      # Every step below the key check is skipped in a dry run: nothing signs in to Google or starts the VM.
+      - if: inputs.dry_run != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Size the bench job's timeout
+        if: inputs.dry_run != 'true'
         id: minutes
         run: |
           case "$LIMIT" in (*[!0-9]*) echo "::error::limit must be a whole number"; exit 1;; esac
@@ -96,43 +142,62 @@ jobs:
       # A label only this run's one-job runner has. run_id and run_attempt belong to the caller when this is a
       # batch cell, so several cells share them and the id is public: the random part keeps cells apart and unguessable.
       - name: Pick this run's runner label
+        if: inputs.dry_run != 'true'
         id: label
         run: echo "label=operon-osworld-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$(openssl rand -hex 6)" >> "$GITHUB_OUTPUT"
-      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+      # OIDC sign-in to Google Cloud (workload identity federation, infra/gcp): no key exists. The identity may only
+      # start, stop and hand a runner script to this one VM, and only jobs of this file on main get it.
+      - if: inputs.dry_run != 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      - run: az vm start --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
-      # Mint a runner that takes exactly this run's bench job and hand it to the VM; retire the old lasting one.
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      # A runner script a cancelled run left on the VM must not run when it boots.
+      - name: Clear a runner script left from an earlier run
+        if: inputs.dry_run != 'true'
+        run: gcloud compute instances remove-metadata "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT" --keys operon-jit-script
+      - name: Start the VM
+        if: inputs.dry_run != 'true'
+        run: gcloud compute instances start "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT"
+      # Mint a runner that takes exactly this run's bench job and hand it to the VM through its metadata; retire the old lasting one.
       - name: Start a one-job runner on the VM
-        # The token is on this step only, not on the checkout and login actions.
+        if: inputs.dry_run != 'true'
+        # The token is on this step only, not on the checkout and sign-in actions.
         env:
           RUNNER_LABEL: ${{ steps.label.outputs.label }}
           GH_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          VM_CLOUD: gcp
+          RUNNER_ONLINE_TIMEOUT: "900"
         run: |
           if [ -z "$GH_ADMIN_TOKEN" ]; then
             echo "::error::Missing repository secret RUNNER_ADMIN_TOKEN (see docs/osworld-runner.md)."
             exit 1
           fi
           bash scripts/bench-runners/jit-runner.sh start linux "$RUNNER_LABEL" operon-osworld
+      - name: "Dry run: keys checked, nothing started"
+        if: inputs.dry_run == 'true'
+        run: |
+          echo "Dry run: the model keys are present in the paid-runs environment; the VM was not started and no model was called." >> "$GITHUB_STEP_SUMMARY"
 
   bench:
     name: Run the OSWorld tasks
     needs: start-vm
-    if: ${{ !cancelled() && needs.start-vm.result == 'success' }}
-    # The one-job runner start-vm put on operon-linux (docs/osworld-runner.md), under this run's own label.
+    if: ${{ !cancelled() && needs.start-vm.result == 'success' && inputs.dry_run != 'true' }}
+    # The one-job runner start-vm put on operon-osworld (docs/osworld-runner.md), under this run's own label.
     runs-on: ${{ needs.start-vm.outputs.runner_label }}
     # 30 min setup + 35 min a task (start-vm sizes it); the fallback is the 25-task worst case.
     timeout-minutes: ${{ fromJSON(needs.start-vm.outputs.bench_minutes || '905') }}
     # Never more than read, even when a caller grants more (benchmark.yml grants write for the video release).
     permissions:
       contents: read
+    # Waits for Vickey's Approve (KAN-282). The model keys are secrets of this environment, not of the repo.
+    environment: paid-runs
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # A registry model (KAN-168) acts through the model backend, always thin with its own done.
       MODEL: ${{ inputs.model }}
+      DONE_CHECK: ${{ inputs.done_check }}
       # Another provider's key reaches a run only when that run uses that provider's model.
       ANTHROPIC_API_KEY: ${{ startsWith(inputs.model, 'claude') && secrets.ANTHROPIC_API_KEY || '' }}
       OPENAI_API_KEY: ${{ startsWith(inputs.model, 'openai') && secrets.OPENAI_API_KEY || '' }}
@@ -152,6 +217,7 @@ jobs:
           case "$LIMIT$MAX_STEPS" in (*[!0-9]*) echo "::error::limit and max_steps must be whole numbers"; exit 1;; esac
           case "$MAX_COST" in (*[!0-9.]*|"") echo "::error::max_cost_usd must be a number"; exit 1;; esac
           case "$ONLY" in (*[!0-9a-fA-F-]*) echo "::error::only must be the start of a task id"; exit 1;; esac
+          case "$DONE_CHECK" in (on | off) ;; (*) echo "::error::done_check must be on or off"; exit 1;; esac
           case "$MODEL" in ("" | claude-sonnet-5-5 | openai-computer-use) ;; (*) echo "::error::model must be empty, claude-sonnet-5-5 or openai-computer-use"; exit 1;; esac
       - name: Set up the VM (idempotent)
         run: scripts/osworld-vm/setup.sh "$GITHUB_WORKSPACE"
@@ -161,6 +227,7 @@ jobs:
           args=(--osworld-repo "$HOME/OSWorld" --max-cost-usd "$MAX_COST" --max-steps "$MAX_STEPS"
                 --operon-python "$HOME/operon-venv/bin/python" --out "$PWD/.var/bench")
           if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
+          args+=(--done-check "$DONE_CHECK")
           if [ -n "$ONLY" ]; then args+=(--only "$ONLY"); elif [ "$LIMIT" != "0" ]; then args+=(--limit "$LIMIT"); fi
           OPERON_DESKTOP_PLATFORM=linux "$HOME/osw-venv/bin/python" -m evals.osworld --videos "${args[@]}" | tee osworld.log
       - name: Summary
@@ -199,27 +266,49 @@ jobs:
         run: docker ps -q --filter "ancestor=happysixd/osworld-docker" | xargs -r docker rm -f
 
   stop-vm:
-    name: Stop the Azure VM
+    name: Stop the Google Cloud VM
     needs: [start-vm, bench]
     # Also after a failed start-vm: it can fail once the VM is already up (the runner step) and the VM must not keep billing.
-    if: ${{ always() && needs.start-vm.result != 'skipped' }}
+    if: ${{ always() && needs.start-vm.result != 'skipped' && inputs.dry_run != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
     env:
-      RESOURCE_GROUP: ${{ vars.AZURE_VM_RESOURCE_GROUP || 'operon-bench' }}
-      VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-linux' }}
+      VM_NAME: ${{ vars.OSWORLD_VM_NAME || 'operon-osworld' }}
+      GCP_ZONE: ${{ vars.OSWORLD_GCP_ZONE || 'us-central1-a' }}
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID || 'propane-cubist-479515-c5' }}
       RUNNER_LABEL: ${{ needs.start-vm.outputs.runner_label }}
+      BENCH_RESULT: ${{ needs.bench.result }}
     steps:
-      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+      # OIDC sign-in to Google Cloud (workload identity federation, infra/gcp): no key exists. The identity may only
+      # start, stop and hand a runner script to this one VM, and only jobs of this file on main get it.
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      # Deallocated, not just stopped: a stopped VM still bills for compute.
-      - run: az vm deallocate --resource-group "$RESOURCE_GROUP" --name "$VM_NAME"
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+      # When the bench job did not succeed, the VM's memory log (infra/gcp/startup.sh writes it to the serial console
+      # every 30 s) shows whether it ran out of memory. Read before the stop, while the console still holds it. Best effort.
+      - name: Show the VM's memory log
+        if: ${{ needs.bench.result != 'success' }}
+        continue-on-error: true
+        run: |
+          {
+            echo "### OSWorld VM memory log (bench: $BENCH_RESULT)"
+            echo
+            echo '```'
+            timeout 90 gcloud compute instances get-serial-port-output "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT" 2>/dev/null \
+              | grep -o 'operon-memlog: .*' | tr -d '`' | tail -n 60 || echo "no memory log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Stopped, not suspended: a stopped VM bills only for its disk.
+      - name: Stop the VM
+        run: gcloud compute instances stop "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT"
+      - name: Clear the runner script from the VM
+        run: |
+          gcloud compute instances remove-metadata "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT" --keys operon-jit-script \
+            || echo "::warning::could not clear the runner script from the VM's metadata"
       # The default branch's script, not anything a run produced. A one-job runner deletes itself when its job
       # ends; this removes it when the bench job never started. Best effort.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

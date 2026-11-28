@@ -46,10 +46,12 @@ task text, actions, and URLs. Review artifacts before exporting or sharing them.
 
 ## What to add next
 
-1. **An approval audit trail.** Record each approval request and its outcome
-   (approved, declined, or cancelled) with the timestamp, run, step, gate, and
-   source of the decision. This would make it possible to reconstruct who or
-   what authorized an action without storing free text or credentials.
+1. **Approval decision sources.** The approval audit trail records requests and
+   their outcomes in `approval_audit.jsonl` and exposes them in the observer's
+   run detail response. It stores request IDs, timestamps, run and step IDs,
+   categories, and outcomes. Approval endpoints currently share the same path
+   for interactive and automated callers, so the trail cannot identify the
+   decision maker. A process crash can leave a request without an outcome.
 2. **A consistent run lifecycle record.** Record start and end events for every
    run, including cancellation and interruption, with the outcome, duration,
    and reason. Today terminal rows only cover selected paths. Start here if

@@ -193,7 +193,7 @@ osworld only=2c1ebcd7 cap=1
 Both take `cap=<USD>` (the whole cell's cost cap, default $3). A line for an own suite is refused. The batch is refused before anything starts when
 its caps add up to more than `max_total_usd` (default $10), so the most it can spend is known up
 front. Grounding cells run side by side on hosted runners; OSWorld cells run one after another on the OSWorld VM
-(the OSWorld workflow starts and deallocates it). `evals/bench_batch.py` reads and checks the cells.
+(the OSWorld workflow starts and stops the Google Cloud VM). `evals/bench_batch.py` reads and checks the cells.
 
 ## Adding models later
 
@@ -366,9 +366,12 @@ that the workflow starts before the run and deallocates after. Setup is in
 
 ## Repository secrets and variables
 
+The three model keys are not repo secrets: set up the `paid-runs` environment as described in
+[osworld-runner.md](osworld-runner.md#paid-runs-environment-setup).
+
 | Name | Kind | Used by |
 |---|---|---|
-| `GEMINI_API_KEY` | secret | Every model call: backends and the benchmark judge |
+| `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | secrets of the `paid-runs` environment | Every model call. Every paid job waits for Vickey's Approve on that environment (KAN-282) |
 | `DATABASE_URL` | secret | Save run results to dashboard import (also set in the Vercel project) |
 | `BLOB_READ_WRITE_TOKEN` | secret | Screenshot and trace upload (also set in the Vercel project); optional |
 | `SLACK_WEBHOOK_URL` | secret | Critical alerts; optional |

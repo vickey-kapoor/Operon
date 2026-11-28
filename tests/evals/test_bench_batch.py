@@ -168,8 +168,8 @@ def test_matrices_split_grounding_from_osworld_and_give_unique_artifact_names() 
         {"label": "Gemini · Grounding · zoom always · 20 per set · abc", "ref": "abc", "zoom": "always", "per_set": "20", "cap": "3", "suffix": "-cell2"}
     ]
     assert out["osworld"]["include"] == [
-        {"label": "Gemini · OSWorld · task 3e5a · 30 steps", "limit": "5", "only": "3e5a", "steps": "30", "model": "", "cap": "1.5", "suffix": "-cell1"},
-        {"label": "Gemini · OSWorld · 25 tasks", "limit": "25", "only": "", "steps": "50", "model": "", "cap": "3", "suffix": "-cell3"},
+        {"label": "Gemini · OSWorld · task 3e5a · 30 steps", "limit": "5", "only": "3e5a", "steps": "30", "model": "", "done_check": "off", "cap": "1.5", "suffix": "-cell1"},
+        {"label": "Gemini · OSWorld · 25 tasks", "limit": "25", "only": "", "steps": "50", "model": "", "done_check": "off", "cap": "3", "suffix": "-cell3"},
     ]
     only_osworld = matrices(parse_batch("osworld"))
     assert only_osworld["has_grounding"] is False and only_osworld["grounding"] == {"include": []}
@@ -205,13 +205,15 @@ def test_the_batch_workflow_passes_every_cell_field_to_the_called_workflows() ->
     for job, called in (("batch-grounding", "grounding.yml"), ("batch-osworld", "osworld-bench.yml")):
         inputs = _workflow(called)[True]["workflow_call"]["inputs"]
         assert set(jobs[job]["with"]) <= set(inputs), f"{job} passes an input {called} does not take"
-        # The callee decides which key reaches a cell; an OSWorld cell may carry the Claude and OpenAI keys too.
-        assert {"GEMINI_API_KEY"} <= set(jobs[job]["secrets"]) <= set(_workflow(called)[True]["workflow_call"].get("secrets", {}))
+        # The model keys are passed by name (KAN-282; a reusable workflow gets an empty one otherwise) and the
+        # callee declares each of them; their values come from the paid-runs environment of the called job.
+        assert jobs[job]["secrets"] != "inherit"
+        assert {"GEMINI_API_KEY"} <= set(jobs[job]["secrets"]) <= set(_workflow(called)[True]["workflow_call"]["secrets"])
         # Each cell's artifact gets its own name; a manual run (empty suffix) keeps today's name.
         assert jobs[job]["with"]["artifact_suffix"] == "${{ matrix.suffix }}"
         assert inputs["artifact_suffix"]["default"] == ""
     # Every matrix field the workflow reads is one the parser writes.
-    fields = {"grounding": ("label", "ref", "zoom", "per_set", "cap", "suffix"), "osworld": ("label", "limit", "only", "steps", "model", "cap", "suffix")}
+    fields = {"grounding": ("label", "ref", "zoom", "per_set", "cap", "suffix"), "osworld": ("label", "limit", "only", "steps", "model", "done_check", "cap", "suffix")}
     for job, kind in (("batch-grounding", "grounding"), ("batch-osworld", "osworld")):
         text = json.dumps(jobs[job])
         for used in {part.split("}}")[0].strip() for part in text.split("matrix.")[1:]}:
@@ -248,8 +250,8 @@ def test_run_videos_are_kept_for_batch_osworld_cells_only() -> None:
 def test_the_osworld_workflow_can_be_called_and_keeps_its_vm_lock() -> None:
     wf = _workflow("osworld-bench.yml")
     assert set(wf[True]) == {"workflow_dispatch", "workflow_call"}
-    assert set(wf[True]["workflow_call"]["inputs"]) == {"limit", "only", "max_cost_usd", "max_steps", "model", "artifact_suffix", "publish_videos"}
-    assert wf["concurrency"]["group"] == "azure-osworld-vm"
+    assert set(wf[True]["workflow_call"]["inputs"]) == {"limit", "only", "max_cost_usd", "max_steps", "model", "done_check", "artifact_suffix", "publish_videos", "dry_run"}
+    assert wf["concurrency"]["group"] == "gcp-osworld-vm"
 
 
 @pytest.mark.parametrize("name", ["live-bench.yml", "live-desktop-bench.yml"])
@@ -332,7 +334,12 @@ def test_osworld_bench_workflow_takes_a_model_and_gates_the_keys() -> None:
     dispatch = wf[True]["workflow_dispatch"]["inputs"]["model"]
     assert dispatch["type"] == "choice" and dispatch["options"] == ["", "claude-sonnet-5-5", "openai-computer-use"]
     assert wf[True]["workflow_call"]["inputs"]["model"] == {"type": "string", "default": ""}
-    assert {"ANTHROPIC_API_KEY", "OPENAI_API_KEY"} <= set(wf[True]["workflow_call"]["secrets"])
+    assert set(wf[True]["workflow_call"]["secrets"]) == {
+        "GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "RUNNER_ADMIN_TOKEN",
+    }
     bench = wf["jobs"]["bench"]
     env = bench["env"]
     assert env["ANTHROPIC_API_KEY"] == "${{ startsWith(inputs.model, 'claude') && secrets.ANTHROPIC_API_KEY || '' }}"
@@ -342,5 +349,41 @@ def test_osworld_bench_workflow_takes_a_model_and_gates_the_keys() -> None:
     assert "claude-sonnet-5-5 | openai-computer-use" in steps["Check the inputs"]
     jobs = _workflow("benchmark.yml")["jobs"]
     assert jobs["batch-osworld"]["with"]["model"] == "${{ matrix.model }}"
-    assert {"ANTHROPIC_API_KEY", "OPENAI_API_KEY"} <= set(jobs["batch-osworld"]["secrets"])
+    assert set(jobs["batch-osworld"]["secrets"]) == {
+        "GEMINI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "RUNNER_ADMIN_TOKEN",
+    }
     assert set(jobs["batch-grounding"]["secrets"]) == {"GEMINI_API_KEY"}  # grounding never gets the other keys
+    assert set(jobs["grounding"]["secrets"]) == {"GEMINI_API_KEY"}
+
+
+def test_the_donecheck_word_turns_the_done_check_on_for_an_osworld_cell() -> None:
+    cell = parse_line("osworld limit=5 donecheck", 1)
+    assert cell.done_check is True and cell.label == "Gemini · OSWorld · 5 tasks · done check"
+    assert parse_line("osworld limit=5", 1).done_check is False
+    assert matrices([cell])["osworld"]["include"][0]["done_check"] == "on"
+    assert matrices([parse_line("osworld", 1)])["osworld"]["include"][0]["done_check"] == "off"
+
+
+def test_donecheck_is_not_for_grounding_and_is_not_an_own_suite_word() -> None:
+    with pytest.raises(BatchError, match="donecheck is for osworld cells"):
+        parse_line("grounding donecheck", 1)
+    from evals.bench_batch import OWN_SUITE_WORDS
+
+    assert "donecheck" not in OWN_SUITE_WORDS
+
+
+def test_a_done_check_cell_is_not_a_repeat_of_the_same_cell_without_it() -> None:
+    assert len(parse_batch("osworld limit=5\nosworld limit=5 donecheck", 0)) == 2
+    with pytest.raises(BatchError, match="twice"):
+        parse_batch("osworld limit=5 donecheck\nosworld limit=5 donecheck cap=1", 0)
+
+
+def test_the_osworld_workflow_takes_and_checks_the_done_check_input() -> None:
+    workflow = _workflow("osworld-bench.yml")
+    assert workflow[True]["workflow_call"]["inputs"]["done_check"]["default"] == "off"
+    assert workflow[True]["workflow_dispatch"]["inputs"]["done_check"]["default"] == "off"
+    text = (WORKFLOWS / "osworld-bench.yml").read_text(encoding="utf-8")
+    assert "DONE_CHECK: ${{ inputs.done_check }}" in text and '--done-check "$DONE_CHECK"' in text

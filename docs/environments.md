@@ -25,6 +25,14 @@ Code: `src/operon/environments/` (`base.py` is the interface, `registry.py` the 
 An unknown name is refused at startup, and a provider whose `check()` fails stops the
 desktop loop from being built, with the missing pieces in the error.
 
+## Your open windows (KAN-205)
+
+A desktop run on your own PC (`live`) leaves your open windows alone. A run hides every window
+first (Win+D on Windows, ctrl+alt+d on the Linux desktop) only when it runs on a throwaway machine
+(any environment but `live`), or when its request sets a `benchmark` name or `"clear_desktop": true`.
+The live desktop and hybrid benchmarks send `"clear_desktop": true`. A request with
+`"clear_desktop": false` never hides them.
+
 ## Environments
 
 | Name | Status | What it is |
@@ -53,7 +61,7 @@ host: API, loop, Gemini calls, run files          machine: operon guest (token-g
 
 The Gemini key, the model calls and the run artifacts stay on the host; screenshots and
 traces travel back as bytes and are written under the host's artifact folder. The guest
-holds only a one-time token. The live view and takeover go through the guest too.
+holds only a one-time token. The live view and takeover go through the guest too, and so does the extra screenshot of the fresh look (`OPERON_FRESH_LOOK`); OSWorld takes it from the VM.
 
 ## Windows Sandbox (`windows-sandbox`)
 

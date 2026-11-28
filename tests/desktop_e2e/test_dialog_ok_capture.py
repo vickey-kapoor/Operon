@@ -31,7 +31,10 @@ Measured on CI (GitHub run 44340050002, job "Desktop (Linux container)", 2026-11
 click-to-capture time over 7 samples per path:
     osworld: min 0.79 s, median 0.79 s, max 0.80 s
     remote:  min 0.65 s, median 0.66 s, max 0.67 s
-CLOSE_DELAY_S = 3.0 s, chosen as at least 3 x the worst sample (2.4 s) and at least 2 s.
+CLOSE_DELAY_S was 3.0 s (3 x that worst sample). On 2026-11-23 (run 45104170922) the osworld
+path measured max 1.01 s, so 3 x worst = 3.03 s and the probe failed by 0.03 s on noise alone.
+CLOSE_DELAY_S = 5.0 s now: at least 3 x the worst sample seen so far with room for runner jitter
+(the probe passes up to a 1.67 s worst sample), and at least 2 s.
 
 Opt in: ``pytest tests/desktop_e2e -m desktop_container -o addopts=""``. Needs Docker.
 """
@@ -61,7 +64,7 @@ pytestmark = pytest.mark.desktop_container
 # How long the dialog stays busy after OK, with no visual change. It must be well above the
 # click-to-capture time of both paths (the probe test checks that), or the race closes by
 # itself and the xfail tests would pass for the wrong reason.
-CLOSE_DELAY_S = 3.0
+CLOSE_DELAY_S = 5.0
 
 SENTINEL = (255, 0, 255)
 SENTINEL_TOLERANCE = 12

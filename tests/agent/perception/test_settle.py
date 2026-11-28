@@ -219,3 +219,29 @@ async def test_default_sleep_and_clock_resolve_at_call_time(monkeypatch) -> None
     result = await wait_until_settled(_grabber([_STILL]), min_s=0.2, max_s=3.0)
     assert result.settled
     assert clock.sleeps and clock.now >= 0.2
+
+
+async def test_min_s_gives_the_first_step_wait_a_one_second_floor(monkeypatch) -> None:
+    """KAN-264: a still screen still waits FIRST_STEP_MIN_WAIT_S; without min_s it returns early."""
+    monkeypatch.setenv("OPERON_SETTLE_DETECT", "on")
+    monkeypatch.setenv("OPERON_SETTLE_MAX_S", "3")
+    clock = FakeClock()
+    monkeypatch.setattr(settle, "_sleep", clock.sleep)
+    monkeypatch.setattr(settle, "_clock", clock.time)
+    assert settle.FIRST_STEP_MIN_WAIT_S == 1.0
+
+    result = await settle_after_action(_grabber([_STILL]), 2.5, min_s=settle.FIRST_STEP_MIN_WAIT_S)
+    assert result is not None and result.settled
+    assert result.waited_s >= 1.0
+
+
+async def test_without_min_s_a_still_screen_returns_well_under_one_second(monkeypatch) -> None:
+    monkeypatch.setenv("OPERON_SETTLE_DETECT", "on")
+    monkeypatch.setenv("OPERON_SETTLE_MAX_S", "3")
+    clock = FakeClock()
+    monkeypatch.setattr(settle, "_sleep", clock.sleep)
+    monkeypatch.setattr(settle, "_clock", clock.time)
+
+    result = await settle_after_action(_grabber([_STILL]), 2.5)
+    assert result is not None and result.settled
+    assert result.waited_s < 1.0

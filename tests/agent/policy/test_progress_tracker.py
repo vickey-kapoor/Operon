@@ -187,6 +187,24 @@ def test_repeating_an_action_that_changes_the_screen_still_builds_a_no_progress_
     assert state.progress_state.last_screen_change_ratio == 0.3
 
 
+def test_a_step_with_no_after_screenshot_skips_the_screen_change_measure(tmp_path: Path) -> None:
+    """KAN-219: no after screenshot (artifact_path None) means no measure, not a 0.0 against a missing file."""
+    tracker = pt.ProgressTracker()
+    state = _state(last_screen_change_ratio=0.4)
+    before = tmp_path / "before.png"
+    before.write_bytes(b"png")
+    action = AgentAction(action_type=ActionType.STOP)
+    decision = PolicyDecision(action=action, rationale="done", confidence=0.9, active_subgoal="fill name")
+
+    trace = tracker.update_progress_state(
+        state=state, decision=decision, executed_action=_executed(action), verification=_verification(stop=True),
+        recovery=_recovery(), step_index=2, before_artifact_path=str(before),
+    )
+
+    assert trace.screen_change_ratio is None
+    assert state.progress_state.last_screen_change_ratio == 0.4  # kept, not overwritten with 0.0
+
+
 # --- RFC 0003: OPERON_PROGRESS_REVISIT ----------------------------------------------
 
 # Greys far apart: the screen diff compares grayscale with a 30-level per-pixel threshold.

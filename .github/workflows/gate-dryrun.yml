@@ -1,0 +1,269 @@
+name: Approve gate check ($0)
+run-name: Approve gate check (${{ github.event_name == 'workflow_dispatch' && inputs.target || 'test' }})
+
+# Proves the paid-runs Approve gate on GitHub without spending anything (KAN-282). No job here calls a model, starts a
+# machine or checks out code; every check prints a length at most, never a secret value.
+#
+# Test mode (the label `gate-dryrun` on a PR from this repo, or a manual start with target test) uses two throwaway
+# environments Vickey creates: `dryrun-gate` (required reviewer Vickey, no branch rule, secret DRYRUN_KEY with any dummy
+# value) and `dryrun-main-only` (required reviewer Vickey, deployment branches: main only, secret DRYRUN_KEY). It shows
+# that a job waits for Approve, that a caller must pass an environment secret by name, that a job outside the
+# environment gets nothing, and that the branch rule refuses a run from a branch.
+#
+# Real mode (a manual start with target real, on main only, after the setup in docs/osworld-runner.md) calls the real
+# grounding and OSWorld workflows with dry_run true: they wait for Approve on paid-runs and check their keys, then stop
+# before any model call or machine start.
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "test: the throwaway environments; real: the paid-runs environment (main only)"
+        type: choice
+        options: [test, real]
+        default: test
+
+permissions:
+  contents: read
+
+jobs:
+  # ---- test mode ----
+  direct:
+    name: Direct (waits for Approve, key present)
+    if: ${{ (github.event_name == 'pull_request' && github.event.label.name == 'gate-dryrun' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.target == 'test') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: dryrun-gate
+    steps:
+      - name: Check the key
+        env:
+          DRYRUN_KEY: ${{ secrets.DRYRUN_KEY }}
+        run: |
+          if [ -z "$DRYRUN_KEY" ]; then echo "::error::DRYRUN_KEY is empty."; exit 1; fi
+          echo "key present (${#DRYRUN_KEY} chars)"
+
+  by-name:
+    name: Called, key passed by name
+    if: ${{ (github.event_name == 'pull_request' && github.event.label.name == 'gate-dryrun' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.target == 'test') }}
+    uses: ./.github/workflows/gate-dryrun-called.yml
+    with:
+      environment: dryrun-gate
+      expect: present
+    secrets:
+      DRYRUN_KEY: ${{ secrets.DRYRUN_KEY }}
+
+  not-passed:
+    name: Called, key not passed (arrives empty)
+    if: ${{ (github.event_name == 'pull_request' && github.event.label.name == 'gate-dryrun' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.target == 'test') }}
+    uses: ./.github/workflows/gate-dryrun-called.yml
+    with:
+      environment: dryrun-gate
+      expect: empty
+
+  no-env:
+    name: No environment (key empty)
+    if: ${{ (github.event_name == 'pull_request' && github.event.label.name == 'gate-dryrun' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.target == 'test') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check that a job outside the environment gets nothing
+        env:
+          DRYRUN_KEY: ${{ secrets.DRYRUN_KEY }}
+        run: |
+          if [ -n "$DRYRUN_KEY" ]; then echo "::error::DRYRUN_KEY reached a job without the environment."; exit 1; fi
+          echo "key empty, as expected"
+
+  main-only:
+    name: Main-only environment (must be refused from a branch)
+    # On main the branch rule lets it through, so it only runs from a branch or a PR.
+    if: ${{ github.ref != 'refs/heads/main' && ((github.event_name == 'pull_request' && github.event.label.name == 'gate-dryrun' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.target == 'test')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: dryrun-main-only
+    steps:
+      # Succeeds if it ever starts, so the report can tell "refused" (failure, no steps) from "ran".
+      - name: It ran
+        run: echo "ran - the branch rule did NOT refuse this job"
+
+  report:
+    name: Test mode report
+    needs: [direct, by-name, not-passed, no-env, main-only]
+    if: ${{ always() && (needs.direct.result != 'skipped' || needs.main-only.result != 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.run_id }}
+      REF: ${{ github.ref }}
+      APPROVAL_ENV: dryrun-gate
+      MAIN_ONLY_JOB: Main-only environment (must be refused from a branch)
+      DIRECT: ${{ needs.direct.result }}
+      BY_NAME: ${{ needs.by-name.result }}
+      NOT_PASSED: ${{ needs.not-passed.result }}
+      NO_ENV: ${{ needs.no-env.result }}
+      MAIN_ONLY: ${{ needs.main-only.result }}
+    steps:
+      - name: Report
+        run: |
+          ok=true
+          fail() { echo "::error::$1"; ok=false; }
+          approvals="$(gh api "repos/$REPO/actions/runs/$RUN_ID/approvals")"
+          jobs_json="$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100")"
+          {
+            echo "## Approve gate check (test mode)"
+            echo "| Job | Expected | Result |"
+            echo "| --- | --- | --- |"
+            echo "| direct | success after Approve | $DIRECT |"
+            echo "| by-name | success after Approve | $BY_NAME |"
+            echo "| not-passed | success after Approve | $NOT_PASSED |"
+            echo "| no-env | success | $NO_ENV |"
+            echo "| main-only | refused: failure with no steps (skipped on main) | $MAIN_ONLY |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for r in "$DIRECT" "$BY_NAME" "$NOT_PASSED" "$NO_ENV"; do
+            [ "$r" = "success" ] || fail "A job did not succeed, see the summary."
+          done
+          # main-only: from a branch the branch rule must refuse it before any step ran; on main it is skipped.
+          if [ "$REF" = "refs/heads/main" ]; then
+            [ "$MAIN_ONLY" = "skipped" ] || fail "main-only should be skipped on main."
+          else
+            [ "$MAIN_ONLY" = "failure" ] || fail "main-only was not refused (result $MAIN_ONLY): the branch rule did not hold."
+            found="$(jq -r --arg n "$MAIN_ONLY_JOB" '[.jobs[] | select(.name == $n)] | length' <<<"$jobs_json")"
+            [ "$found" = "1" ] || fail "Expected exactly one job named '$MAIN_ONLY_JOB', found $found."
+            done_steps="$(jq -r --arg n "$MAIN_ONLY_JOB" '[.jobs[] | select(.name == $n) | .steps[]? | select(.status == "completed")] | length' <<<"$jobs_json")"
+            [ "$done_steps" = "0" ] || fail "main-only ran $done_steps steps: it was not refused before it started. If it asked for your Approve, the branch rule is missing."
+          fi
+          # A refusal by the branch rule never creates a review. Any review of dryrun-main-only (a Reject too) means the
+          # job waited for a person, so the branch rule is missing.
+          reviewed="$(jq -r '[.[] | select([.environments[]?.name] | index("dryrun-main-only"))] | length' <<<"$approvals")"
+          [ "$reviewed" = "0" ] || fail "dryrun-main-only was reviewed ($reviewed entries): the branch rule is missing, a refusal asks nobody. Fix the environment and re-run."
+          # An Approve really happened for the environment the jobs waited on.
+          who="$(jq -r --arg e "$APPROVAL_ENV" '.[] | select(.state == "approved") | select([.environments[]?.name] | index($e)) | "\(.user.login) (\(.state))"' <<<"$approvals")"
+          if [ -z "$who" ]; then
+            fail "No approval of the $APPROVAL_ENV environment is recorded for this run: nothing waited for Approve."
+          else
+            echo "Approved by: $who"
+            echo "Approved by: $who" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          {
+            echo ""
+            echo "| Job | Result | Started | Finished |"
+            echo "| --- | --- | --- | --- |"
+            jq -r '.jobs[] | "| \(.name) | \(.conclusion // .status) | \(.started_at // "-") | \(.completed_at // "-") |"' <<<"$jobs_json"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$ok" = "true" ] || exit 1
+
+  # ---- real mode (main only, after the setup) ----
+  real-needs-main:
+    name: Real mode needs main
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.target == 'real' && github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail, real mode runs on main only
+        run: |
+          echo "::error::real mode runs on main only (start it from main after the merge)."
+          exit 1
+
+  real-grounding:
+    name: Real grounding workflow, dry run
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.target == 'real' && github.ref == 'refs/heads/main' }}
+    uses: ./.github/workflows/grounding.yml
+    with:
+      dry_run: "true"
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  real-osworld:
+    name: Real OSWorld workflow, dry run
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.target == 'real' && github.ref == 'refs/heads/main' }}
+    # The called workflow's publish-videos job asks for contents: write and actions: read (it is skipped in a dry
+    # run, but a caller must still grant them), as in benchmark.yml.
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/osworld-bench.yml
+    with:
+      limit: "1"
+      dry_run: "true"
+      publish_videos: "false"
+    # No RUNNER_ADMIN_TOKEN: only the runner step uses it, and a dry run skips that step.
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+  # Asserts no model key reaches a job outside the paid-runs environment, which shows the repo secrets are deleted.
+  real-no-env:
+    name: No environment (model keys empty)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.target == 'real' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check that a job outside paid-runs gets no model key
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          bad=""
+          if [ -n "$GEMINI_API_KEY" ]; then bad="$bad GEMINI_API_KEY"; echo "GEMINI_API_KEY: non-empty"; else echo "GEMINI_API_KEY: empty"; fi
+          if [ -n "$ANTHROPIC_API_KEY" ]; then bad="$bad ANTHROPIC_API_KEY"; echo "ANTHROPIC_API_KEY: non-empty"; else echo "ANTHROPIC_API_KEY: empty"; fi
+          if [ -n "$OPENAI_API_KEY" ]; then bad="$bad OPENAI_API_KEY"; echo "OPENAI_API_KEY: non-empty"; else echo "OPENAI_API_KEY: empty"; fi
+          if [ -n "$bad" ]; then
+            echo "::error::These still reach a job without the paid-runs environment, delete the repo secrets:$bad"; exit 1
+          fi
+
+  real-report:
+    name: Real mode report
+    needs: [real-grounding, real-osworld, real-no-env]
+    if: ${{ always() && (needs.real-grounding.result != 'skipped' || needs.real-osworld.result != 'skipped' || needs.real-no-env.result != 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.run_id }}
+      APPROVAL_ENV: paid-runs
+      GROUNDING: ${{ needs.real-grounding.result }}
+      OSWORLD: ${{ needs.real-osworld.result }}
+      NO_ENV: ${{ needs.real-no-env.result }}
+    steps:
+      - name: Report
+        run: |
+          ok=true
+          fail() { echo "::error::$1"; ok=false; }
+          approvals="$(gh api "repos/$REPO/actions/runs/$RUN_ID/approvals")"
+          jobs_json="$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100")"
+          {
+            echo "## Approve gate check (real mode)"
+            echo "| Job | Expected | Result |"
+            echo "| --- | --- | --- |"
+            echo "| real-grounding | success after Approve | $GROUNDING |"
+            echo "| real-osworld | success after Approve (the VM is never started) | $OSWORLD |"
+            echo "| real-no-env | success | $NO_ENV |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for r in "$GROUNDING" "$OSWORLD" "$NO_ENV"; do
+            [ "$r" = "success" ] || fail "A job did not succeed, see the summary."
+          done
+          who="$(jq -r --arg e "$APPROVAL_ENV" '.[] | select(.state == "approved") | select([.environments[]?.name] | index($e)) | "\(.user.login) (\(.state))"' <<<"$approvals")"
+          if [ -z "$who" ]; then
+            fail "No approval of the $APPROVAL_ENV environment is recorded for this run: nothing waited for Approve."
+          else
+            echo "Approved by: $who"
+            echo "Approved by: $who" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          {
+            echo ""
+            echo "| Job | Result | Started | Finished |"
+            echo "| --- | --- | --- | --- |"
+            jq -r '.jobs[] | "| \(.name) | \(.conclusion // .status) | \(.started_at // "-") | \(.completed_at // "-") |"' <<<"$jobs_json"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$ok" = "true" ] || exit 1

@@ -5,6 +5,11 @@ on:
     branches: ["main", "master"]
   pull_request:
     branches: ["main", "master"]
+  # KAN-228: merges made by the PR gate use GITHUB_TOKEN, which does not start push CI, so the free jobs also
+  # run on main every night (02:23 UTC = 8:23 PM Chicago, before the 9:47 PM daily note).
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
 
 # Least privilege: every job only reads the repo (artifact uploads need no extra scope).
 permissions:
@@ -12,7 +17,7 @@ permissions:
 
 # A newer push to the same PR or branch cancels the run it replaces.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name == 'schedule' && 'nightly' || github.event_name == 'workflow_dispatch' && 'nightly-dispatch' || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -147,7 +152,8 @@ jobs:
   desktop:
     # KAN-166: the real loop clicks and types on a real XFCE desktop (the KAN-80 Linux
     # desktop container) with a scripted model instead of Gemini, so it costs nothing.
-    # Graded from the machine's own state; tests/desktop_e2e.
+    # Graded from the machine's own state; tests/desktop_e2e. Every run uploads its evidence
+    # (screenshots, run.jsonl, state.json) as the desktop-e2e-evidence artifact, pass or fail.
     name: Desktop (Linux container)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -172,7 +178,17 @@ jobs:
         env:
           GEMINI_API_KEY: fake-test-key
           OPERON_E2E_REQUIRE_DESKTOP: "true"
+          OPERON_E2E_ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts
         run: uv run pytest tests/desktop_e2e -m desktop_container -o addopts="" -v --tb=short
+
+      - name: Upload the run evidence (screenshots, run.jsonl, state.json)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: desktop-e2e-evidence
+          path: ${{ runner.temp }}/e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
 
   lint:
     name: Lint
@@ -197,6 +213,36 @@ jobs:
 
       - name: Run ruff
         run: uv run ruff check src tests evals --select E,F,W,I --ignore E501
+
+  terraform:
+    # KAN-224: the OSWorld runner's Google Cloud setup. Formatting and a validate of both roots; no
+    # backend and no credentials, so nothing here reads or changes the real project.
+    name: Terraform (infra/gcp)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive infra
+
+      - name: Validate the state bucket bootstrap
+        run: |
+          terraform -chdir=infra/gcp/bootstrap init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/gcp/bootstrap validate
+
+      - name: Validate the runner VM setup
+        run: |
+          terraform -chdir=infra/gcp init -backend=false -input=false -lockfile=readonly
+          terraform -chdir=infra/gcp validate
 
   typecheck:
     # KAN-159. mypy over src/operon; settings and the starting baseline (modules
@@ -228,6 +274,8 @@ jobs:
     # The real loop drives the real NativeBrowserExecutor on headless Chromium against a
     # local fixture site, with a scripted model instead of Gemini, so it costs nothing.
     # tests/browser_e2e. OPERON_E2E_REQUIRE_BROWSER makes a missing Chromium fail, not skip.
+    # Every run uploads its evidence (screenshots, run.jsonl, state.json) as the
+    # browser-e2e-evidence artifact, pass or fail.
     name: Browser end to end (Chromium)
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -255,7 +303,17 @@ jobs:
         env:
           GEMINI_API_KEY: fake-test-key
           OPERON_E2E_REQUIRE_BROWSER: "true"
+          OPERON_E2E_ARTIFACTS_DIR: ${{ runner.temp }}/e2e-artifacts
         run: uv run pytest tests/browser_e2e -m browser_e2e -o addopts="" -v --tb=short
+
+      - name: Upload the run evidence (screenshots, run.jsonl, state.json)
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: browser-e2e-evidence
+          path: ${{ runner.temp }}/e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 7
 
   evals:
     # The scripted eval scenarios through the real loop, offline. `python -m evals` exits 1
@@ -285,3 +343,43 @@ jobs:
         env:
           GEMINI_API_KEY: fake-test-key
         run: uv run python -m evals
+
+  nightly-report:
+    # KAN-228: only on the nightly run. Opens (or comments on) one issue when a job failed, closes it when all pass.
+    name: Nightly report
+    needs: [test, test-windows, desktop, lint, terraform, typecheck, browser-e2e, evals]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      RESULTS: ${{ join(needs.*.result, ' ') }}
+    steps:
+      - name: Open, update or close the nightly-failure issue
+        run: |
+          set -euo pipefail
+          gh label create nightly-failure --repo "$REPO" --color B60205 --description "The nightly tests on main failed (KAN-228)" --force
+          open_issues=$(gh issue list --repo "$REPO" --label nightly-failure --state open --limit 100 --json number --jq '.[].number')
+          existing=$(printf '%s\n' "$open_issues" | head -n 1)
+          failed=no
+          for r in $RESULTS; do
+            [ "$r" = success ] || failed=yes
+          done
+          printf 'Run: %s\n' "$RUN_URL" > body.md
+          if [ "$failed" = yes ]; then
+            printf '\nJob results: %s\n' "$RESULTS" >> body.md
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --repo "$REPO" --body-file body.md
+            else
+              gh issue create --repo "$REPO" --title "Nightly tests failed on main" --label nightly-failure --body-file body.md
+            fi
+          else
+            printf 'The nightly tests passed again.\n\n' | cat - body.md > comment.md
+            for n in $open_issues; do
+              gh issue close "$n" --repo "$REPO" --comment "$(cat comment.md)"
+            done
+          fi

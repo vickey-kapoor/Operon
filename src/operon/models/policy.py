@@ -374,6 +374,9 @@ class PolicyDecision(StrictModel):
     # Set when a deterministic rule (not the LLM) produced this decision.
     # The loop uses this to build the rule trace injected into the next LLM prompt.
     rule_name: str | None = None
+    # Set only by a backend when the model's reply had no action at all: what it said
+    # ("" when it wrote nothing). The loop counts these replies in a row (KAN-204).
+    words_only: str | None = None
 
 
 AgentAction.model_rebuild()

@@ -77,7 +77,7 @@ def _custom_tools(environment: str) -> list[dict[str, Any]]:
     return [{
         "type": "function",
         "name": "navigate",
-        "description": "Open a URL in the current tab. The screenshots show no address bar.",
+        "description": "Open an http or https URL in the current tab. The screenshots show no address bar.",
         "parameters": {
             "type": "object",
             "properties": {"url": {"type": "string"}},
@@ -315,12 +315,16 @@ class OpenAIComputerUseBackend(AgentBackend):
             if _has_acted(state):
                 decision = _stop(text or "Task complete.", None)
             else:
-                decision = build_policy_decision({
+                payload: dict[str, Any] = {
                     "action": {"action_type": "wait", "wait_ms": 1000},
                     "rationale": text or "No action proposed.",
                     "confidence": 0.4,
                     "active_subgoal": "start the task",
-                })
+                }
+                if not calls and response.get("status") in (None, "completed"):
+                    # Words only, before acting: the loop counts these (KAN-204).
+                    payload["words_only"] = text
+                decision = build_policy_decision(payload)
         self._cached_decision = decision
 
         perception = ScreenPerception(

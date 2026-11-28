@@ -266,6 +266,9 @@ class BrowserClaudeComputerUseBackend(AgentBackend):
                 "confidence": 0.4,
                 "active_subgoal": f"gather more {self.screen_name.lower()} context",
             }
+            if not calls and response.get("stop_reason") in (None, "end_turn", "stop_sequence"):
+                # Words only, before acting: the loop counts these (KAN-204).
+                decision_payload["words_only"] = text
         self._cached_decision = build_policy_decision(decision_payload)
         proposed = self._cached_decision.action
         conversation.proposed_action_types = (

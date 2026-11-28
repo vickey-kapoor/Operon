@@ -122,3 +122,18 @@ def test_buffer_keeps_only_newest_notes(monkeypatch):
 
     note = asyncio.run(many())
     assert note is not None and note.count("Screen activity") == 3
+
+
+def test_settle_forwards_min_s_to_settle_after_action(monkeypatch) -> None:
+    """KAN-264: min_s reaches settle_after_action with change_note on and off."""
+    seen: list[dict] = []
+
+    async def fake(grab, fallback_delay, **kwargs):
+        seen.append(kwargs)
+        return None
+
+    monkeypatch.setattr("operon.agent.perception.change_note.settle_after_action", fake)
+    for on in (False, True):
+        monkeypatch.setattr("operon.agent.perception.change_note.get_settings", lambda on=on: _settings(on))
+        asyncio.run(ChangeNoteBuffer().settle(MagicMock(), 2.5, min_s=1.0))
+    assert [k["min_s"] for k in seen] == [1.0, 1.0]

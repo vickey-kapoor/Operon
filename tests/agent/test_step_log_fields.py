@@ -175,3 +175,28 @@ def test_usage_path_dropped_when_no_usage_was_written() -> None:
     )
     assert AgentLoop._latest_debug_artifacts(service).usage_artifact_path is None
     assert AgentLoop._latest_debug_artifacts(SimpleNamespace()) is None
+
+
+def test_a_stop_step_logs_no_after_screenshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression for KAN-218: a stop captures no after screenshot, so its row must not name one."""
+    from evals import harness
+
+    real_execute = harness.FakeExecutor.execute
+
+    async def execute(self, action):  # like the real executors, a stop takes no after screenshot
+        done = await real_execute(self, action)
+        return done.model_copy(update={"artifact_path": None}) if action.action_type.value == "stop" else done
+
+    monkeypatch.setattr(harness.FakeExecutor, "execute", execute)
+    asyncio.run(run_scenario(cu_click_then_done(), root=tmp_path))
+    logs = [StepLog.model_validate(entry) for entry in _run_log_lines(tmp_path)]
+    stops = [log for log in logs if log.policy_decision.action.action_type.value == "stop"]
+    others = [log for log in logs if log not in stops]
+    assert stops and others
+    assert all(log.after_artifact_path is None for log in stops)
+    # KAN-219: nor may its executed action name the planned after.png.
+    assert all(log.executed_action.artifact_path is None for log in stops)
+    # A normal step still names an after file that exists.
+    assert all(log.after_artifact_path and Path(log.after_artifact_path).exists() for log in others)
+    state = json.loads(next((tmp_path / "runs").glob("*/state.json")).read_text(encoding="utf-8"))
+    assert not any(p.endswith(f"step_{stops[-1].step_index}/after.png") for p in state["artifact_paths"])

@@ -48,8 +48,10 @@ class StepArtifactsManager:
         Path(run_log).touch(exist_ok=True)
 
     def relocate_after_artifact(self, executed_action, planned_path: str):
+        # No screenshot taken (a stop, a failed action): keep artifact_path empty rather than
+        # naming a planned after.png that was never written (KAN-219).
         if executed_action.artifact_path is None:
-            return executed_action.model_copy(update={"artifact_path": planned_path})
+            return executed_action
 
         current_path = Path(executed_action.artifact_path)
         target_path = Path(planned_path)

@@ -208,6 +208,9 @@ def _waiting(loop, record) -> dict[str, Any] | None:
         return None
     if getattr(record, "in_takeover", False):
         return {"kind": "takeover", "reason": "You are in control. Hand back when you are done."}
+    restore = getattr(loop, "restore_pending_approval", None)
+    if callable(restore):
+        restore(record)  # after a restart the loop holds nothing until it reads the saved state (KAN-226)
     reason = getattr(record, "pause_reason", None) or record.hitl_message or "Paused."
     gate = loop.pending_gate(record.run_id) if hasattr(loop, "pending_gate") else None
     waiting: dict[str, Any] = {"kind": "approval" if gate is not None else "needs_you", "gate": gate, "reason": reason}
@@ -243,6 +246,8 @@ async def run_status(run_id: str, *, recent: int = 8) -> dict[str, Any]:
         # computer); a local Windows desktop shows step screenshots instead.
         "live_view": environment == "browser" or hasattr(getattr(loop, "executor", None), "live_frame_png"),
         "status": record.status.value,
+        "outcome": outcome_label(record),
+        "done_checked": done_checked(record),
         "done": record.status in TERMINAL,
         "step_count": record.step_count,
         "max_steps": record.max_steps,
@@ -417,6 +422,30 @@ _OUTCOME = {
     RunStatus.PENDING: "Not started",
 }
 
+# KAN-206: a finished run whose "done" nothing checked (the thin harness takes the model's
+# word) is labelled apart from a checked success. The run status stays "succeeded".
+UNCHECKED_DONE = "Model says done"
+
+
+def done_checked(record) -> bool | None:
+    """Whether a succeeded run's final "done" was checked: True when something judged it (an
+    independent done check that agreed, KAN-208, or the step critic of a run saved before
+    KAN-183), False when only the model said so, None for a run that did not succeed or
+    kept no verdict. Only the last verdict counts: it is the stop step's, after any check."""
+    if record.status is not RunStatus.SUCCEEDED:
+        return None
+    history = getattr(record, "verification_history", None) or []
+    if not history:
+        return None
+    return not history[-1].unchecked
+
+
+def outcome_label(record) -> str:
+    """The run's outcome in words, for listings, reports and ``operon run``."""
+    if done_checked(record) is False:
+        return UNCHECKED_DONE
+    return _OUTCOME.get(record.status, record.status.value)
+
 
 def recent_runs(limit: int = 20) -> list[dict[str, Any]]:
     """The newest runs on this computer, newest first, for listings.
@@ -443,7 +472,8 @@ def recent_runs(limit: int = 20) -> list[dict[str, Any]]:
             "run_id": state.run_id,
             "intent": state.intent,
             "status": state.status.value,
-            "outcome": _OUTCOME.get(state.status, state.status.value),
+            "outcome": outcome_label(state),
+            "done_checked": done_checked(state),
             "done": state.status in TERMINAL,
             "step_count": state.step_count,
             "updated_at": state_path.stat().st_mtime,
@@ -522,7 +552,7 @@ async def build_report(run_id: str) -> dict[str, Any]:
     final_rows = [step for step in steps if step["checked_by"] != "retried"]
     retries = len(steps) - len(final_rows)
     failed_steps = sum(1 for step in final_rows if not step["ok"])
-    outcome = _OUTCOME.get(status, status.value)
+    outcome = outcome_label(record)
     approvals = getattr(record, "approval_count", 0)
     takeovers = getattr(record, "takeover_count", 0)
     summary = f"{outcome} after {record.step_count} step{'s' if record.step_count != 1 else ''}"
@@ -537,6 +567,7 @@ async def build_report(run_id: str) -> dict[str, Any]:
         "environment": _environment_of(run_id),
         "status": status.value,
         "outcome": outcome,
+        "done_checked": done_checked(record),
         "summary": summary,
         "stop_reason": stop_reason,
         "failure_cause": failure_cause.value if failure_cause is not None else None,

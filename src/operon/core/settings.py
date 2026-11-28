@@ -122,6 +122,8 @@ class Settings(BaseModel):
     parallel_runs: int = _env_field("OPERON_PARALLEL_RUNS", 1)
     # Wait for the screen to stop changing after an action, not a fixed time (KAN-110).
     settle_detect: bool = _env_field("OPERON_SETTLE_DETECT", False)
+    # Look at the screen again just before a pointer action; skip it if the spot changed (KAN-207).
+    fresh_look: bool = _env_field("OPERON_FRESH_LOOK", False)
     # Gemini's own content filter: "default" sends no safetySettings, "high_only" relaxes it to
     # BLOCK_ONLY_HIGH. Never touches Operon's safety gates or the safety_decision flow.
     gemini_safety: str = _env_field("OPERON_GEMINI_SAFETY", "default")
@@ -145,6 +147,10 @@ class Settings(BaseModel):
     # resumed from the current screen on request (KAN-80).
     checkpoints: bool = _env_field("OPERON_CHECKPOINTS", False)
     planner_model: str = _env_field("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite")
+    # One independent check of the model's "done": a model that sees the final screen can send
+    # the run back to work, at most twice per run (KAN-208).
+    done_check: bool = _env_field("OPERON_DONE_CHECK", False)
+    done_check_model: str = _env_field("OPERON_DONE_CHECK_MODEL", "gemini-3.5-flash")
     trust_gate: bool = _env_field("OPERON_TRUST_GATE", True)
     # The trust gate reads the text under a click from the screenshot (KAN-163; needs [ocr]).
     click_text: bool = _env_field("OPERON_CLICK_TEXT", False)
@@ -400,6 +406,7 @@ class _Parser:
             progress_revisit=self.flag("OPERON_PROGRESS_REVISIT", "off"),
             parallel_runs=max(1, self.number("OPERON_PARALLEL_RUNS", "1", int, fatal=False)),
             settle_detect=self.flag("OPERON_SETTLE_DETECT", "off"),
+            fresh_look=self.flag("OPERON_FRESH_LOOK", "off"),
             gemini_safety=gemini_safety,
             auto_confirm=self.flag("OPERON_AUTO_CONFIRM", "off"),
             settle_max_s=min(15.0, max(0.5, self.number("OPERON_SETTLE_MAX_S", "3.0", float, fatal=False))),
@@ -412,6 +419,8 @@ class _Parser:
             task_note_max_items=min(50, max(1, self.number("OPERON_TASK_NOTE_MAX_ITEMS", "8", int, fatal=False))),
             checkpoints=self.flag("OPERON_CHECKPOINTS", "off"),
             planner_model=self.or_default("OPERON_PLANNER_MODEL", "gemini-3.5-flash-lite"),
+            done_check=self.flag("OPERON_DONE_CHECK", "off"),
+            done_check_model=self.or_default("OPERON_DONE_CHECK_MODEL", "gemini-3.5-flash"),
             trust_gate=self.text("OPERON_TRUST_GATE", "on").strip().lower() not in {"off", "false", "0", "no"},
             click_text=self.flag("OPERON_CLICK_TEXT", "off"),
             trust_deny=_split(self.text("OPERON_TRUST_DENY"), lower=True),

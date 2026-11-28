@@ -870,9 +870,9 @@ class DesktopExecutor(Executor):
             except Exception:
                 logger.debug("aclose: cleanup_run failed for %s", run_id, exc_info=True)
 
-    async def settle_now(self, fallback_delay: float) -> None:
+    async def settle_now(self, fallback_delay: float, *, min_s: float | None = None) -> None:
         """Wait for the screen to settle (OPERON_SETTLE_DETECT), else sleep ``fallback_delay``."""
-        await self._change_notes.settle(self._grab_signature, fallback_delay)
+        await self._change_notes.settle(self._grab_signature, fallback_delay, min_s=min_s)
 
     def pop_change_note(self) -> str | None:
         """The change notes collected since the last call (OPERON_CHANGE_NOTE), or None."""
@@ -899,10 +899,25 @@ class DesktopExecutor(Executor):
             # Screen is still animating — wait and re-capture once before perceiving
             logger.debug("High visual velocity (%.3f) detected; waiting 300ms before re-capture", velocity)
             await asyncio.sleep(0.3)
+            discarded = frame.artifact_path
             frame, _ = await asyncio.to_thread(self._capture_burst_sync)
+            try:
+                Path(discarded).unlink(missing_ok=True)
+            except OSError:
+                pass
         if not self._internal_capture:
             self._record_focus()
         return frame
+
+    async def peek_frame(self) -> CaptureFrame | None:
+        """A fresh screenshot with no side effects (KAN-207): the focus guard reference is not
+        re-recorded, so a focus steal during the model's think is still caught. Errors propagate:
+        the loop counts them and fails open."""
+        self._internal_capture = True
+        try:
+            return await self.capture()
+        finally:
+            self._internal_capture = False
 
     # Windows only: the Linux executor turns this off, and off Windows the window helpers return None.
     _focus_guard_platform = True

@@ -12,6 +12,7 @@ checks ($0: offline evals, replay, browser/desktop/windows e2e, unit tests) are 
 # OSWorld-Verified subset (25 fixed tasks, scored by OSWorld; needs the Linux VM, docs/osworld-runner.md):
 .venv\Scripts\python -m evals.osworld [--limit 5] [--only <task id prefix>] [--max-cost-usd 3] [--model claude-sonnet-5-5|openai-computer-use] [--list]
 # A task that errors is recorded (status/stop_reason/error per result) and the run goes on; --job-minutes prints the CI job timeout for the chosen tasks (30 + 35 min a task).
+# --done-check on (default off; batch word `donecheck`) sets OPERON_DONE_CHECK (KAN-208): one independent check of the model's done; each task result carries done_checks (checked/accepted/rejected/error).
 # --model (empty = Gemini) runs Claude or GPT through the KAN-168 model adapter (OPERON_DESKTOP_BACKEND=model); they spend Anthropic/OpenAI credits: need Vickey's cost OK (about $3-6 per 25 tasks per model). Batch cell: osworld model=<profile>
 
 # Grounding eval: ScreenSpot-v2/Pro samples, one model call each through the real backend, click scored vs the box
@@ -59,7 +60,7 @@ checks ($0: offline evals, replay, browser/desktop/windows e2e, unit tests) are 
 #   /bench batch  (then one cell per line): the day's approved queue in one run, caps summed up front
 #     (KAN-105, benchmark.yml, evals/bench_batch.py). Cells:
 #       grounding [zoom|zoom=always] [per_set=<1..500>] [pr=<n>|ref=<ref>] [cap=<USD>]
-#       osworld [limit=<0..25>] [only=<task id prefix>] [steps=<1..200>] [model=claude-sonnet-5-5|openai-computer-use] [cap=<USD>]   (default branch, own VM; no pr=/ref=)
+#       osworld [limit=<0..25>] [only=<task id prefix>] [steps=<1..200>] [model=claude-sonnet-5-5|openai-computer-use] [donecheck] [cap=<USD>]   (default branch, own VM; no pr=/ref=)
 #   Own-suite words (browser, desktop, hybrid, core, smoke, ...) are refused, with a KAN-184 message. model= is for osworld cells only.
 #   OSWorld by hand: Actions > Run OSWorld test tasks (own VM) > Run workflow (osworld-bench.yml).
 # Record and replay (KAN-167, evals/replay.py): --keep-screens also writes <report>/recordings/<task>.json for each
@@ -67,7 +68,8 @@ checks ($0: offline evals, replay, browser/desktop/windows e2e, unit tests) are 
 # replays it through the real loop for $0 (tests/evals/test_replay.py); a changed action fails with the step.
 #   python -m evals.replay check [evals/recordings/*.json]
 # Gemini runs only (Claude/GPT refused); hybrid replays via the desktop path. Scripted desktop/hybrid recordings ($0, KAN-178): python -m evals.scripted_recordings [--check]
-# Repo secrets: GEMINI_API_KEY, DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
+# Model keys GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY are secrets of the `paid-runs` GitHub Environment (every job
+# using them waits for Vickey's Approve, KAN-282; callers pass them by name, the values come from the environment). Repo secrets: DATABASE_URL, BLOB_READ_WRITE_TOKEN, SLACK_WEBHOOK_URL,
 # AZURE_CREDENTIALS (fallback); variables AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID (OIDC),
 # optional AZURE_VM_RESOURCE_GROUP, AZURE_VM_NAME. Keep Vercel Authentication (All Deployments) on for the dashboard.
 

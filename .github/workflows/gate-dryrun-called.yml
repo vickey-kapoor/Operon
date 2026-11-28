@@ -1,0 +1,38 @@
+name: Approve gate check, called part ($0)
+
+# Called by gate-dryrun.yml (KAN-282). One job in a named environment that checks whether the secret DRYRUN_KEY
+# arrived: a caller must pass an environment secret by name, or the called job gets an empty value. No model call,
+# no checkout, no cost. It prints a length, never the value.
+
+on:
+  workflow_call:
+    inputs:
+      environment: {type: string, required: true}
+      expect: {type: string, required: true}  # "present" or "empty"
+    secrets:
+      DRYRUN_KEY: {required: false}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check the secret in ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Check the secret against what the caller expects
+        env:
+          DRYRUN_KEY: ${{ secrets.DRYRUN_KEY }}
+          EXPECT: ${{ inputs.expect }}
+        run: |
+          case "$EXPECT" in
+            present)
+              if [ -z "$DRYRUN_KEY" ]; then echo "::error::DRYRUN_KEY is empty, expected it to arrive."; exit 1; fi
+              echo "key present (${#DRYRUN_KEY} chars)";;
+            empty)
+              if [ -n "$DRYRUN_KEY" ]; then echo "::error::DRYRUN_KEY arrived, expected it to be empty (the caller passed nothing)."; exit 1; fi
+              echo "key empty, as expected";;
+            *) echo "::error::expect must be present or empty"; exit 1;;
+          esac

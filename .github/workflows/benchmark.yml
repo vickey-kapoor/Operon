@@ -26,9 +26,10 @@ run-name: >-
 #
 # grounding cells take zoom, per_set=<n>, pr=<n> (that PR's head; forks refused) or ref=<branch|tag|commit>
 # and cap=<USD> (default $3). osworld cells take limit=<0..25>, only=<task id prefix>, steps=<n>,
-# model=claude-sonnet-5-5|openai-computer-use (default Gemini; raise cap=, e.g. cap=6, for a 25-task Claude/GPT cell) and
+# model=claude-sonnet-5-5|openai-computer-use (default Gemini; raise cap=, e.g. cap=6, for a 25-task Claude/GPT cell),
+# donecheck (KAN-208: OPERON_DONE_CHECK on for that cell) and
 # cap=<USD>. Grounding cells run side by side on hosted runners; OSWorld cells run one after another
-# on the OSWorld VM (the OSWorld workflow starts and deallocates it). The batch is refused before anything
+# on the OSWorld VM (the OSWorld workflow starts and stops it). The batch is refused before anything
 # starts when the cells' caps add up to more than the batch cap, so the most it can spend is known up front.
 #
 # The engines it calls (grounding.yml, osworld-bench.yml) are also startable by hand. PRs from forks
@@ -53,7 +54,7 @@ permissions:
 
 # One batch at a time: manual and "/bench batch" runs share a group, and the
 # OSWorld VM is theirs while they run. Single /bench comments and everything else run freely
-# (each OSWorld cell also takes the VM's own concurrency group, azure-osworld-vm, in osworld-bench.yml).
+# (each OSWorld cell also takes the VM's own concurrency group, gcp-osworld-vm, in osworld-bench.yml).
 concurrency:
   group: ${{ (github.event_name != 'issue_comment' || startsWith(github.event.comment.body, '/bench batch')) && 'benchmark-queue' || github.run_id }}
   cancel-in-progress: false
@@ -194,12 +195,14 @@ jobs:
       per_set: ${{ matrix.per_set }}
       max_cost_usd: ${{ matrix.cap }}
       artifact_suffix: ${{ matrix.suffix }}
-    # Named, not inherited: the benchmarked code never sees the dashboard, Blob, Slack or Azure secrets.
+    # Named, never inherited: the benchmarked code never sees the dashboard, Blob, Slack or Azure secrets. The key is
+    # passed by name (a reusable workflow gets an empty one otherwise); its value comes from the paid-runs environment
+    # of the called job (KAN-282).
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
   # OSWorld runs the default branch on its own VM, one cell at a time (max-parallel: 1);
-  # osworld-bench.yml starts the VM, runs, and deallocates it.
+  # osworld-bench.yml starts the Google Cloud VM, runs, and stops it.
   batch-osworld:
     name: ${{ matrix.label }}
     needs: plan
@@ -222,8 +225,10 @@ jobs:
       artifact_suffix: ${{ matrix.suffix }}
       max_steps: ${{ matrix.steps }}
       model: ${{ matrix.model }}
+      done_check: ${{ matrix.done_check }}
       publish_videos: "false"  # publish-videos below keeps every cell's videos in one release
-    # Only the called workflow's bench job decides which key reaches a cell (by its model).
+    # Passed by name; the values come from the paid-runs environment of the called jobs (KAN-282). Only the called
+    # bench job decides which key reaches a cell (by its model).
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -239,6 +244,7 @@ jobs:
     with:
       ref: ${{ needs.parse.outputs.sha }}
       zoom: ${{ needs.parse.outputs.zoom }}
+    # By name; the value comes from the paid-runs environment of the called job (KAN-282).
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 

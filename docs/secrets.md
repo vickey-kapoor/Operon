@@ -68,7 +68,7 @@ was, so nothing that records the action can hold the value:
 | Windows desktop (`DesktopExecutor`) | same, typed with `SendInput` (`KEYEVENTF_UNICODE`, surrogate pairs handled): **never the clipboard** |
 | Linux desktop (`LinuxDesktopExecutor`) | typed key by key with `pyautogui.write`, any length, never the clipboard. A secret with a character that has no key (an accent, a newline, an emoji) **fails closed** before any click |
 | Remote guest (Windows Sandbox, Linux container) | the **host** swaps, because the guest has no vault; the value crosses to the guest over the token-protected HTTP connection. That connection is plain HTTP, so it is sent only to loopback (the container) or to the exact guest address the provider reported (the Sandbox's host-only IP); any other address, private ranges included, fails the action. The Sandbox provider accepts the address its guest wrote to `ready.json` only if it is a loopback, private or link-local IP literal; otherwise secrets fail closed. The request carries a `secret_filled` marker so the guest types the text as it is (no second placeholder lookup, no clipboard) and masks it in its reply. The host also masks the reply and puts the original action back before the loop sees it |
-| OSWorld VM | the value goes only into the command sent to the VM (`pyautogui.write`); non-ASCII secrets fail closed instead of being pasted |
+| OSWorld VM | the value goes only into the command sent to the VM (`pyautogui.write`); non-ASCII text is typed through a remapped keycode (never the clipboard); non-ASCII secrets still fail closed |
 
 A secret never goes through the clipboard (no Win+V history, no cloud clipboard). As a second guard,
 `read_clipboard` output is masked against every secret typed in the run.

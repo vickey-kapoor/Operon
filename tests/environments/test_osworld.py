@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -252,9 +254,84 @@ def test_visual_servo_allows_content_and_input_zones(tmp_path):
         AgentAction(action_type=ActionType.CLICK, x=200, y=150, is_input_zone=True))).success
 
 
-def test_non_ascii_text_is_pasted_not_written():
-    snippet = pyautogui_snippet(AgentAction(action_type=ActionType.TYPE, text="café"))
-    assert "pyperclip.copy('café')" in snippet and "hotkey('ctrl', 'v')" in snippet
+def _type_snippet(text):
+    return pyautogui_snippet(AgentAction(action_type=ActionType.TYPE, text=text))
+
+
+def test_ascii_type_snippet_is_unchanged():
+    assert _type_snippet("hi there") == "pyautogui.write('hi there', interval=0.02)"
+
+
+@pytest.mark.parametrize("text", ["252–272", "café"])
+def test_non_ascii_snippet_has_no_clipboard_and_no_fallback(text):
+    snippet = _type_snippet(text)
+    assert "pyperclip" not in snippet and "except" not in snippet and "clipboard" not in snippet.lower()
+    compile(snippet, "<snippet>", "exec")
+
+
+class _FakeX:
+    """Fake pyautogui and Xlib modules that record what the VM script does."""
+
+    def __init__(self, monkeypatch, *, xlib=True):
+        self.calls = []
+        calls = self.calls
+        pyautogui = SimpleNamespace(write=lambda text, interval=0: calls.append(("write", text)), FAILSAFE=True)
+        self.pyautogui = pyautogui
+        if not xlib:
+            monkeypatch.setitem(sys.modules, "Xlib", None)
+            return
+        rows = [(0, 0), (97, 65), (0, 0)]  # keycodes 8..10; 8 is spare
+
+        class Display:
+            display = SimpleNamespace(info=SimpleNamespace(min_keycode=8, max_keycode=10))
+
+            def get_keyboard_mapping(self, first, count):
+                return rows[first - 8:first - 8 + count]
+
+            def change_keyboard_mapping(self, kc, mapping):
+                calls.append(("map", kc, mapping[0]))
+
+            def sync(self):
+                pass
+
+        fake_x = SimpleNamespace(KeyPress=2, KeyRelease=3)
+        xtest = SimpleNamespace(fake_input=lambda d, kind, kc: calls.append(("xtest", kind, kc)))
+        pkg = types.ModuleType("Xlib")
+        for name, mod in (("X", fake_x), ("display", SimpleNamespace(Display=Display)), ("ext", types.ModuleType("Xlib.ext"))):
+            setattr(pkg, name, mod)
+            monkeypatch.setitem(sys.modules, f"Xlib.{name}", mod)
+        pkg.ext.xtest = xtest
+        monkeypatch.setitem(sys.modules, "Xlib", pkg)
+        monkeypatch.setitem(sys.modules, "Xlib.ext.xtest", xtest)
+        monkeypatch.setattr("time.sleep", lambda s: calls.append(("sleep", s)))
+
+    def run(self, snippet, monkeypatch):
+        monkeypatch.setitem(sys.modules, "pyautogui", self.pyautogui)
+        exec("import pyautogui; pyautogui.FAILSAFE = False\n" + snippet, {})
+
+
+def test_non_ascii_text_is_typed_with_xtest(monkeypatch):
+    fake = _FakeX(monkeypatch)
+    fake.run(_type_snippet("252–272"), monkeypatch)
+    assert fake.calls == [
+        ("write", "252"),
+        ("map", 8, (0x1002013, 0x1002013)), ("sleep", 0.05), ("xtest", 2, 8), ("xtest", 3, 8), ("sleep", 0.05),
+        ("write", "272"),
+        ("sleep", 0.2), ("map", 8, (0, 0)),
+    ]
+
+
+def test_latin1_char_uses_its_latin1_keysym(monkeypatch):
+    fake = _FakeX(monkeypatch)
+    fake.run(_type_snippet("é"), monkeypatch)
+    assert ("map", 8, (0xE9, 0xE9)) in fake.calls and fake.calls[-1] == ("map", 8, (0, 0))
+
+
+def test_missing_xlib_fails_instead_of_dropping_characters(monkeypatch):
+    fake = _FakeX(monkeypatch, xlib=False)
+    with pytest.raises(ImportError):
+        fake.run(_type_snippet("252–272"), monkeypatch)
+    assert fake.calls == []
 
 
 def test_batch_stops_when_the_cancellation_check_blocks(tmp_path):

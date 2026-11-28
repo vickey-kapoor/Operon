@@ -9,8 +9,9 @@
 # tasks chosen (`python -m evals.osworld --job-minutes`, computed in start-vm: 30 min + 35 min a task), not a flat number.
 #
 # Needs repo secret RUNNER_ADMIN_TOKEN (fine-grained token, this repo only, Administration read+write: it mints and deletes
-# the one-job runner) and repo secret GEMINI_API_KEY (ANTHROPIC_API_KEY / OPENAI_API_KEY for a `model` run) and the
-# repo variables GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT (Terraform outputs of infra/gcp).
+# the one-job runner) and the repo variables GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT (Terraform outputs of infra/gcp).
+# The model keys GEMINI_API_KEY, ANTHROPIC_API_KEY and OPENAI_API_KEY are secrets of the `paid-runs` environment (KAN-282):
+# start-vm and bench each wait for Vickey's Approve, so a run needs two Approve clicks.
 # Cost: Gemini about $0.12 a task (the last full 25-task run was $3.11); Claude or GPT about $0.12-0.24 a task.
 # The VM (n2-standard-4 and its address) is about $0.20 an hour while a run is going; its 150 GB disk about $15 a month.
 # The cap is checked between tasks, so a run can overshoot by one task.
@@ -57,9 +58,6 @@ on:
       # benchmark.yml keeps the videos of all its cells in one release itself, so it passes "false".
       publish_videos: {type: string, default: "true"}
     secrets:
-      GEMINI_API_KEY: {required: false}
-      ANTHROPIC_API_KEY: {required: false}
-      OPENAI_API_KEY: {required: false}
       # Mints the one-job runner. Only benchmark.yml's osworld cell passes it; it never reaches the bench job.
       RUNNER_ADMIN_TOKEN: {required: false}
 
@@ -77,6 +75,8 @@ jobs:
     runs-on: ubuntu-latest
     # A VM's first start installs Docker and the runner before it takes the runner (RUNNER_ONLINE_TIMEOUT below).
     timeout-minutes: 25
+    # Waits for Vickey's Approve (KAN-282) before the VM, which costs per hour, is started.
+    environment: paid-runs
     permissions:
       contents: read
       id-token: write
@@ -147,6 +147,8 @@ jobs:
     # Never more than read, even when a caller grants more (benchmark.yml grants write for the video release).
     permissions:
       contents: read
+    # Waits for Vickey's Approve (KAN-282). The model keys are secrets of this environment, not of the repo.
+    environment: paid-runs
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # A registry model (KAN-168) acts through the model backend, always thin with its own done.

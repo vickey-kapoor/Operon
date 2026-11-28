@@ -36,8 +36,6 @@ on:
         description: "Git ref to evaluate (empty: the triggering ref)"
         type: string
         default: ""
-    secrets:
-      GEMINI_API_KEY: {required: false}
 
 permissions:
   contents: read
@@ -47,6 +45,9 @@ jobs:
     name: Run the click-accuracy test
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Every run waits for Vickey's Approve (KAN-282). GEMINI_API_KEY is a secret of this environment; a job-level
+    # environment secret wins over a secret a caller passes.
+    environment: paid-runs
     env:
       UV_PYTHON: "3.14"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -55,7 +56,7 @@ jobs:
       - name: Check the secrets
         run: |
           if [ -z "$GEMINI_API_KEY" ]; then
-            echo "::error::Missing repository secret GEMINI_API_KEY."; exit 1
+            echo "::error::GEMINI_API_KEY is missing from the paid-runs environment."; exit 1
           fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

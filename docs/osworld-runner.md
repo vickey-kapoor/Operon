@@ -67,9 +67,11 @@ OSWorld app catalog. Report scores as run with those.
    `operon-osworld`. If the VM has another name or zone, set the repo variables `OSWORLD_VM_NAME` and
    `OSWORLD_GCP_ZONE` (and `GCP_PROJECT_ID` for another project).
 
-4. The repo secret `GEMINI_API_KEY` is the one the other benchmarks use. The key reaches the run
+4. The model keys `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are secrets of the `paid-runs`
+   GitHub environment (KAN-282), not repo secrets. The jobs `start-vm` and `bench` both wait for Vickey's Approve
+   on that environment, so a run needs two Approve clicks: machine start, then tasks. A key reaches the run
    as an environment variable of the job; it is not written to the VM's disk by the workflow.
-   A `model` run also uses the repo secret `ANTHROPIC_API_KEY` (Claude) or `OPENAI_API_KEY` (GPT); each reaches
+   A `model` run uses `ANTHROPIC_API_KEY` (Claude) or `OPENAI_API_KEY` (GPT); each reaches
    only a run of that provider's model, never a Gemini or grounding run.
 
 The first run also installs everything on the VM (`start-vm` waits up to 15 minutes for the runner), creates the

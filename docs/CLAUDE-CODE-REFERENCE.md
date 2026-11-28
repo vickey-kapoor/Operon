@@ -6,7 +6,7 @@ repo `C:\Users\vicke\GitHub\Operon`). Work moved here from the claude.ai project
 architecture, invariants and the Opus/Haiku/Sonnet dev workflow; this file adds the
 standing rules, infrastructure and open items that live outside the code.
 
-Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
+Last updated: 2026-11-27. Contains no secrets: keys live in GitHub secrets (the model keys in the `paid-runs` environment),
 `~/.operon` and Vickey's local `.env`.
 
 ## Standing rules (Vickey)
@@ -134,7 +134,7 @@ Last updated: 2026-11-27. Contains no secrets: keys live in GitHub repo secrets,
 |---|---|
 | Jira | Site `vickeykapoor11.atlassian.net`, project **KAN**, board 1. Epics: KAN-7 (project), KAN-77 (architecture v2), KAN-113 (self-driving perception), KAN-139 (scaling stages), KAN-149 (audit). |
 | Confluence | Space **OPERON**, home page 295140 (hand-written TOC). |
-| GitHub | `vickey-kapoor/Operon`. API keys (Gemini, Anthropic, OpenAI) are repo secrets. Actions: approval required for all external contributors. |
+| GitHub | `vickey-kapoor/Operon`. API keys (Gemini, Anthropic, OpenAI) are secrets of the `paid-runs` environment: every paid run waits for Vickey's Approve (KAN-282). Actions: approval required for all external contributors. |
 | Paid workflow | `benchmark.yml` "Run Operon on test tasks (paid)": manual dispatch (`cells`), `/bench grounding` or `/bench batch` PR comments. Paid runs are OSWorld and grounding only (KAN-184). Engines: `osworld-bench.yml`, `grounding.yml` (`live-bench.yml` and `live-desktop-bench.yml` are no longer startable, kept until the cleanup PR). Syntax in `evals/CLAUDE.md`. |
 | Paid batches | Started by hand with `cells` (Actions > Run Operon on test tasks (paid) > Run workflow). The nightly queue (`evals/nightly-queue.txt`) was removed 2026-11-18; it stays in git history. Older batch log: project file `bench-queue/queue.md`. |
 | OSWorld | `osworld-bench.yml` "Run OSWorld test tasks (own VM)": started by hand or as a batch cell (always the default branch), runs on the Google Cloud VM `operon-osworld` (KAN-224), report artifact `osworld-report` (not imported to the dashboard). |

@@ -368,7 +368,7 @@ that the workflow starts before the run and deallocates after. Setup is in
 
 | Name | Kind | Used by |
 |---|---|---|
-| `GEMINI_API_KEY` | secret | Every model call: backends and the benchmark judge |
+| `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | secrets of the `paid-runs` environment | Every model call. Every paid job waits for Vickey's Approve on that environment (KAN-282) |
 | `DATABASE_URL` | secret | Save run results to dashboard import (also set in the Vercel project) |
 | `BLOB_READ_WRITE_TOKEN` | secret | Screenshot and trace upload (also set in the Vercel project); optional |
 | `SLACK_WEBHOOK_URL` | secret | Critical alerts; optional |

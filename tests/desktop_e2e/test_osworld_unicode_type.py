@@ -32,7 +32,7 @@ pytestmark = pytest.mark.desktop_container
 READY_FILE = "/tmp/kan290_ready.json"
 TYPED_FILE = "/tmp/kan290_typed.txt"
 APP_PATTERN = "python3 /tmp/kan290_ap[p].py"  # the [p] keeps pkill from matching itself
-TEXT = "Pages 252–272, café “quoted” 5 € naïve"
+TEXT = "Pages 252–272, café “quoted” 5 € naïve ““€é"
 
 APP_SOURCE = '''\
 import json

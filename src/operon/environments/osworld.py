@@ -78,6 +78,8 @@ def _operon_type(text):
             xtest.fake_input(d, X.KeyPress, kc)
             xtest.fake_input(d, X.KeyRelease, kc)
             d.sync()
+            time.sleep(0.05)  # sync() only waits for the server: let the app read the key first
+        time.sleep(0.2)
     finally:
         d.change_keyboard_mapping(kc, [tuple(saved)])
         d.sync()

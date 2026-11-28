@@ -303,7 +303,7 @@ class _FakeX:
         pkg.ext.xtest = xtest
         monkeypatch.setitem(sys.modules, "Xlib", pkg)
         monkeypatch.setitem(sys.modules, "Xlib.ext.xtest", xtest)
-        monkeypatch.setattr("time.sleep", lambda s: None)
+        monkeypatch.setattr("time.sleep", lambda s: calls.append(("sleep", s)))
 
     def run(self, snippet, monkeypatch):
         monkeypatch.setitem(sys.modules, "pyautogui", self.pyautogui)
@@ -315,9 +315,9 @@ def test_non_ascii_text_is_typed_with_xtest(monkeypatch):
     fake.run(_type_snippet("252–272"), monkeypatch)
     assert fake.calls == [
         ("write", "252"),
-        ("map", 8, (0x1002013, 0x1002013)), ("xtest", 2, 8), ("xtest", 3, 8),
+        ("map", 8, (0x1002013, 0x1002013)), ("sleep", 0.05), ("xtest", 2, 8), ("xtest", 3, 8), ("sleep", 0.05),
         ("write", "272"),
-        ("map", 8, (0, 0)),
+        ("sleep", 0.2), ("map", 8, (0, 0)),
     ]
 
 

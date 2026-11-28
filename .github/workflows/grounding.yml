@@ -55,6 +55,8 @@ jobs:
   grounding:
     name: Run the click-accuracy test
     runs-on: ubuntu-latest
+    # A dry run (KAN-282 gate check) runs the separate dry-run job below instead.
+    if: ${{ inputs.dry_run != 'true' }}
     timeout-minutes: 60
     # Every run waits for Vickey's Approve (KAN-282). GEMINI_API_KEY is a secret of this environment; the caller
     # passes it by name (reusable workflows need that), and the environment's value is what the job reads.
@@ -70,23 +72,18 @@ jobs:
             echo "::error::GEMINI_API_KEY is missing from the paid-runs environment."; exit 1
           fi
 
-      - name: Check out the code to evaluate
-        if: inputs.dry_run != 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || '' }}
           persist-credentials: false
 
       - name: Install uv
-        if: inputs.dry_run != 'true'
         run: python -m pip install --upgrade pip uv
 
       - name: Install dependencies (exact versions from uv.lock)
-        if: inputs.dry_run != 'true'
         run: uv sync --locked --extra dev
 
       - name: Run the click-accuracy test
-        if: inputs.dry_run != 'true'
         env:
           MODEL: ${{ inputs.model }}
           PER_SET: ${{ inputs.per_set }}
@@ -96,7 +93,7 @@ jobs:
           uv run python -m evals.grounding --per-set "$PER_SET" --zoom "$ZOOM" ${MODEL:+--model "$MODEL"} | tee grounding.txt
 
       - name: Summary
-        if: always() && inputs.dry_run != 'true'
+        if: always()
         run: |
           {
             echo "## Grounding"
@@ -106,7 +103,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the report
-        if: always() && inputs.dry_run != 'true'
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           # Not bench-*: the "Save run results to dashboard" workflow imports those as benchmark runs.
@@ -117,7 +114,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: "Dry run: key checked, nothing run"
-        if: inputs.dry_run == 'true'
+  # The gate check: waits for Approve on paid-runs, checks the key arrived, and stops. It checks out nothing, installs
+  # nothing and calls no model; it prints no value. Its own job, so the real job's steps carry no dry-run conditions.
+  dry-run:
+    name: Dry run, check the key only
+    if: ${{ inputs.dry_run == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: paid-runs
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - name: Check the key and stop
         run: |
-          echo "Dry run: the key is present in the paid-runs environment; nothing was run and no model was called." >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY is missing from the paid-runs environment."; exit 1
+          fi
+          echo "Dry run: key present, nothing run" >> "$GITHUB_STEP_SUMMARY"

@@ -129,12 +129,20 @@ def test_grounding_dry_run_stops_after_the_key_check() -> None:
     wf = _wf("grounding.yml")
     assert _triggers(wf)["workflow_call"]["inputs"]["dry_run"] == {"type": "string", "default": "false"}
     assert _triggers(wf)["workflow_dispatch"]["inputs"]["dry_run"]["default"] == "false"
-    steps = wf["jobs"]["grounding"]["steps"]
-    assert steps[0]["name"] == "Check the secrets" and "if" not in steps[0]  # runs in a dry run too
-    for step in steps[1:-1]:
-        assert "inputs.dry_run != 'true'" in step["if"], step.get("name") or step.get("uses")
-    assert steps[-1]["if"] == "inputs.dry_run == 'true'"
-    assert "GITHUB_STEP_SUMMARY" in steps[-1]["run"]
+    jobs = wf["jobs"]
+    # The real job's steps carry no dry-run conditions; the whole job is skipped (CodeQL reads step-level ifs on a
+    # checkout as weak protection).
+    assert jobs["grounding"]["if"] == "${{ inputs.dry_run != 'true' }}"
+    assert not any("dry_run" in json.dumps(step) for step in jobs["grounding"]["steps"])
+    # The dry run is its own job: the paid-runs gate, the key check, and nothing that costs money.
+    dry = jobs["dry-run"]
+    assert dry["if"] == "${{ inputs.dry_run == 'true' }}" and _env(dry) == "paid-runs"
+    assert dry["env"] == {"GEMINI_API_KEY": "${{ secrets.GEMINI_API_KEY }}"}
+    assert len(dry["steps"]) == 1
+    step = dry["steps"][0]
+    assert "uses" not in step  # no checkout, no install
+    assert '-z "$GEMINI_API_KEY"' in step["run"] and "exit 1" in step["run"] and "GITHUB_STEP_SUMMARY" in step["run"]
+    assert "evals." not in step["run"] and "uv " not in step["run"]
 
 
 def test_osworld_dry_run_never_signs_in_or_starts_the_vm() -> None:

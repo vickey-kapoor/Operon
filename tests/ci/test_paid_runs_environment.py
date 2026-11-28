@@ -167,7 +167,12 @@ def test_a_caller_passes_model_keys_by_name_to_a_callee_that_declares_them_and_g
 
 @pytest.mark.parametrize(
     ("file", "job"),
-    [("osworld-bench.yml", "start-vm"), ("osworld-bench.yml", "bench"), ("grounding.yml", "grounding")],
+    [
+        ("osworld-bench.yml", "start-vm"),
+        ("osworld-bench.yml", "bench"),
+        ("grounding.yml", "grounding"),
+        ("grounding.yml", "dry-run"),
+    ],
 )
 def test_the_paid_jobs_wait_for_approval(file: str, job: str) -> None:
     assert _environment_name(_workflows()[file]["jobs"][job]) == "paid-runs"

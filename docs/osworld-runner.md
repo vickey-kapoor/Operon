@@ -86,7 +86,9 @@ comparable with earlier runs. `operon-osworld` has 16 GB and an 8 GB swap file.
 
 ### Paid-runs environment setup
 
-Done once in GitHub (Settings, Environments), by Vickey (KAN-282):
+Done once in GitHub (Settings, Environments), by Vickey (KAN-282). Order: steps 1-6 BEFORE this PR merges (if it
+merges first, GitHub creates `paid-runs` on the first run with no reviewer, and the repo keys are still there), then
+merge, then step 7.
 
 1. Create the environment `paid-runs`.
 2. Required reviewers: Vickey.
@@ -94,7 +96,13 @@ Done once in GitHub (Settings, Environments), by Vickey (KAN-282):
 4. Leave "Prevent self-review" off: agents start runs as her account, so it would lock her out.
 5. Deployment branches and tags: Selected branches and tags, `main` only.
 6. Add `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` as environment secrets.
-7. Then delete the three repo secrets: while they exist, any job without the environment can read them.
+7. After the merge, delete the three repo secrets: while they exist, any job without the environment can read them.
+8. Check it once: start one small click-accuracy (grounding) run by hand, see it show "Waiting for review" and the GitHub
+   email arrive, then press Reject (nothing is spent when rejected).
+
+A hand start of `grounding.yml` now works only from `main` (the environment accepts `main` only). To test a branch, use
+a batch cell `grounding ref=<branch>` or `/bench grounding` on the PR. A batch needs two Approve clicks per OSWorld cell,
+and its cells run one after another.
 
 ## When a run fails
 

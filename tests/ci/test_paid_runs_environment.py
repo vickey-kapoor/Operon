@@ -41,14 +41,45 @@ def _uses_a_model_key(job: dict) -> bool:
     return bool(KEY_REF.search(json.dumps(job, default=str))) or job.get("secrets") == "inherit"
 
 
-def test_every_job_that_reads_a_model_key_uses_the_paid_runs_environment() -> None:
-    missing = [
+def _jobs_without_the_environment(name: str, wf: dict) -> list[str]:
+    # A key read at workflow level (env: ...) reaches every job, so then every job needs the environment.
+    top_level = {k: v for k, v in wf.items() if k != "jobs"}
+    workflow_wide = _uses_a_model_key(top_level)
+    return [
         f"{name}:{job_id}"
-        for name, wf in _workflows().items()
         for job_id, job in wf["jobs"].items()
-        if (name, job_id) not in EXEMPT_JOBS and _uses_a_model_key(job) and _environment_name(job) != "paid-runs"
+        if (name, job_id) not in EXEMPT_JOBS
+        and (workflow_wide or _uses_a_model_key(job))
+        and _environment_name(job) != "paid-runs"
     ]
+
+
+def test_every_job_that_reads_a_model_key_uses_the_paid_runs_environment() -> None:
+    missing = [m for name, wf in _workflows().items() for m in _jobs_without_the_environment(name, wf)]
     assert not missing, f"jobs that read a model key without environment: paid-runs: {missing}"
+
+
+def test_a_workflow_level_key_read_needs_the_environment_on_every_job() -> None:
+    wf = {
+        "env": {"K": "${{ secrets.GEMINI_API_KEY }}"},
+        "jobs": {"a": {"environment": "paid-runs"}, "b": {"steps": []}, "c": {"environment": {"name": "other"}}},
+    }
+    assert _jobs_without_the_environment("x.yml", wf) == ["x.yml:b", "x.yml:c"]
+    assert _jobs_without_the_environment("x.yml", {"jobs": {"b": {"steps": []}}}) == []
+
+
+def test_the_exempt_live_benches_can_only_be_called_and_nobody_calls_them() -> None:
+    workflows = _workflows()
+    for file in {f for f, _ in EXEMPT_JOBS}:
+        triggers = workflows[file].get("on", workflows[file].get(True))  # YAML reads a bare `on` as True
+        assert set(triggers) == {"workflow_call"}, f"{file} can be started on its own"
+    callers = [
+        f"{name}:{job_id}"
+        for name, wf in workflows.items()
+        for job_id, job in wf["jobs"].items()
+        if any(str(job.get("uses", "")).endswith(f) for f, _ in EXEMPT_JOBS)
+    ]
+    assert not callers, f"workflows call an exempt live bench: {callers}"
 
 
 def test_the_key_pattern_catches_every_spelling() -> None:

@@ -108,7 +108,15 @@ merge, then step 7.
    - `main-only` must be refused by its branch rule, so the PR run ends with a red `main-only` job by design. Read
      the `report` job: it is green when everything held, and its summary names who approved, with a table of every job
      and when it started and finished. If `main-only` asks for your Approve, the branch rule is missing: Reject it, and
-     the report will fail (expected); fix the environment and re-run.
+     the report will fail (expected); fix the environment, then remove the label and add it again to start a new run.
+     Do not use "Re-run" on the old run: its approvals history keeps the old Reject (and an old Approve), so it stays
+     red or can show a stale approval.
+   - The red `main-only` job leaves a red check on the PR's head, so only add the label to PR #391 (on any other PR
+     the red check blocks the merge gate until a new commit).
+   - A red `not-passed` (a key arrived although it was not passed) means GitHub behaves differently from the KAN-282
+     lesson in CLAUDE.md, not that the Approve gate failed; tell Claude.
+   - After the check, keep or delete the two test environments as you like. If you delete them and add the label
+     again, GitHub recreates them unprotected and the report goes red.
    - After the merge and step 7: start "Approve gate check" by hand with target `real`, from main, and Approve the
      waiting jobs. It runs the OSWorld workflow's `start-vm` job with `dry_run` true (it checks the keys, then stops
      before any sign-in or VM start) and `grounding.yml`'s separate `dry-run` job (it checks the key and stops), and checks that a job outside `paid-runs` has none of the three model keys, which shows the repo secrets
@@ -125,6 +133,8 @@ merge, then step 7.
    - OSWorld's second Approve (`bench`, `stop-vm`) and the Google sign-in: a dry run stops before them.
    - The Anthropic and OpenAI keys inside `paid-runs` (a dry run uses the default model).
    - That an agent's token could not approve through the API: the no-approve rule covers that.
+   - That `RUNNER_ADMIN_TOKEN` (a repo secret with Administration write) cannot change the `paid-runs` settings: only the
+     no-change rule covers that.
 
    Do not start real mode while a paid OSWorld run is queued: both use the shared VM lock, which can cancel the queued
    one. If `main-only` is left waiting, the report never runs, so Approve or Reject every waiting job.

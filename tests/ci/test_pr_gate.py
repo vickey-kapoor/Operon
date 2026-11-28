@@ -1033,7 +1033,7 @@ def test_sweep_checks_the_pause_before_it_merges_or_notes() -> None:
     assert "Auto-work is paused" in run
     assert "|| echo paused" in run and "rm -f" in run  # fail closed
     assert _wf()["jobs"]["sweep"]["permissions"]["issues"] == "read"
-    assert _wf()["jobs"]["sweep"]["permissions"]["actions"] == "write"  # starts ci.yml on main (KAN-283)
+    assert "actions" not in _wf()["jobs"]["sweep"]["permissions"]  # least privilege: start-main-ci holds it (KAN-283)
 
 
 def test_sweep_starts_from_events_and_keeps_the_timers() -> None:
@@ -1066,23 +1066,43 @@ def test_sweep_if_allows_only_pr_ci_and_trusted_pass_markers() -> None:
     assert "'17 6 * * *'" in jobs["daily"]["if"]
 
 
-def test_sweep_starts_ci_on_main_after_a_merge() -> None:
+START_CI = 'gh workflow run ci.yml --repo "$REPO" --ref main'
+
+
+def test_sweep_reports_a_merge_and_a_separate_job_starts_ci_on_main() -> None:
+    jobs = _wf()["jobs"]
+    sweep, start = jobs["sweep"], jobs["start-main-ci"]
     run = _sweep_run()
-    start = 'gh workflow run ci.yml --repo "$REPO" --ref main'
-    assert run.count(start) == 1
-    assert run.index("merged=0") < run.index("while read -r n")
-    assert run.index("gh pr merge") < run.index("merged=1") < run.index('done < "$work/prs"') < run.index(start)
-    assert '[ "$merged" = 1 ]' in run[run.index('done < "$work/prs"') : run.index(start)]
+    step = next(s for s in sweep["steps"] if "run" in s)
+    assert sweep["outputs"]["merged"] == "${{ steps.%s.outputs.merged }}" % step["id"]
+    assert "gh workflow run" not in run
+    assert run.index("merged=0") < run.index("trap ") < run.index("pr_gate.py paused") < run.index("while read -r n")
+    assert """trap 'echo "merged=$merged" >> "$GITHUB_OUTPUT"' EXIT""" in run
+    assert run.count("merged=0") == 1
+    assert run.index("gh pr merge") < run.index("merged=1") < run.index('done < "$work/prs"')
     assert "${{" not in run
+    assert start["permissions"] == {"actions": "write"}
+    assert start["needs"] == "sweep"
+    assert "needs.sweep.outputs.merged == '1'" in start["if"]
+    assert start["runs-on"] == "ubuntu-latest" and start["timeout-minutes"] == 5
+    assert len(start["steps"]) == 1 and start["steps"][0]["run"] == START_CI
+    assert not any("uses" in x for x in start["steps"])
+    assert "${{" not in start["steps"][0]["run"]
 
 
 FAKE_SWEEP_GH = """#!/bin/sh
 echo "$@" >> "$FAKE_GH_LOG"
 case "$*" in
-  "pr list"*"--label low-risk"*) echo 5 ;;
-  "api repos/o/r/pulls/5") echo '{"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' ;;
-  "api"*"issues?state=open"*) echo '[]' ;;
-  "api"*"/issues/5/comments"*) echo '[]' ;;
+  "pr list"*"--label low-risk"*) echo 5; echo 6 ;;
+  "api repos/o/r/pulls/"[56]) echo '{"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}' ;;
+  "api"*"issues?state=open"*)
+    # FAKE_PAUSE_AFTER_MERGE: the pause label appears once a PR has been merged.
+    if [ -n "$FAKE_PAUSE_AFTER_MERGE" ] && grep -q "^pr merge" "$FAKE_GH_LOG"; then
+      echo '[{"number":1,"state":"open","labels":[{"name":"auto-work-paused"}]}]'
+    else
+      echo '[]'
+    fi ;;
+  "api"*"/comments"*) echo '[]' ;;
   "api"*"/files"*) echo '[]' ;;
   "api"*"/status") echo '{}' ;;
 esac
@@ -1097,8 +1117,11 @@ exec "$REAL_PYTHON" "$@"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="shells out to bash (KAN-195)")
-@pytest.mark.parametrize(("verdict", "starts_ci"), [("ready", 1), ("not-ready", 0)])
-def test_sweep_starts_ci_on_main_only_when_something_merged(tmp_path: Path, verdict: str, starts_ci: int) -> None:
+@pytest.mark.parametrize(
+    ("verdict", "pause_after_merge", "merged"),
+    [("ready", False, 1), ("not-ready", False, 0), ("ready", True, 1)],
+)
+def test_sweep_reports_merged_in_github_output(tmp_path: Path, verdict: str, pause_after_merge: bool, merged: int) -> None:
     import os
     import shutil
     import subprocess
@@ -1115,9 +1138,11 @@ def test_sweep_starts_ci_on_main_only_when_something_merged(tmp_path: Path, verd
         f.write_text(body, encoding="utf-8")
         f.chmod(0o755)
     log = tmp_path / "gh.log"
+    out = tmp_path / "github_output"
     env = {
         "PATH": os.pathsep.join([str(fakebin), str(Path(jq).parent), str(Path(bash).parent)]),
         "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_OUTPUT": str(out),
         "REPO": "o/r",
         "AUTO_MERGE": "on",
         "FAKE_VERDICT": verdict,
@@ -1125,11 +1150,16 @@ def test_sweep_starts_ci_on_main_only_when_something_merged(tmp_path: Path, verd
         "REAL_PYTHON": sys.executable,
         "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
     }
+    if pause_after_merge:
+        env["FAKE_PAUSE_AFTER_MERGE"] = "1"
     done = subprocess.run([bash, str(script)], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
     assert done.returncode == 0, done.stderr
     calls = log.read_text(encoding="utf-8").splitlines()
-    assert sum(c.startswith("pr merge") for c in calls) == starts_ci
-    assert calls.count("workflow run ci.yml --repo o/r --ref main") == starts_ci
+    assert not any(c.startswith("workflow run") for c in calls)  # the sweep holds no actions: write
+    assert out.read_text(encoding="utf-8").splitlines() == [f"merged={merged}"]
+    if pause_after_merge:
+        assert "Auto-work is paused" in done.stdout  # the second PR hit the pause and the script left early
+        assert sum(c.startswith("pr merge") for c in calls) == 1
 
 
 def test_sweep_checks_the_pause_again_before_each_merge_and_note() -> None:
@@ -1188,6 +1218,7 @@ def test_sweep_pause_prefix_runs_with_a_fake_gh(tmp_path: Path, mode: str, body:
         "RUNNER_TEMP": str(tmp_path),
         "REPO": "o/r",
         "FAKE_GH_MODE": mode,
+        "GITHUB_OUTPUT": str(tmp_path / "github_output"),
         "FAKE_GH_BODY": str(tmp_path / "body.json"),
         "FAKE_GH_LOG": str(log),
         "PYTHONPATH": os.environ.get("PYTHONPATH", ""),

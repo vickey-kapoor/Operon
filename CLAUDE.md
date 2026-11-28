@@ -242,7 +242,7 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
   no-approve rule is what stops that. An agent never changes the `paid-runs` environment (reviewers, branch rule, bypass,
   secrets) and never adds a model key as a repo secret.
 - Marker comments come from the same account that opens PRs, so they are only as trustworthy as the review behind them.
-  Gate merges use `GITHUB_TOKEN` and start no push CI, so the sweep starts `ci.yml` on `main` after each merge (KAN-283).
+  Gate merges use `GITHUB_TOKEN` and start no push CI, so the `start-main-ci` job starts `ci.yml` on `main` after a sweep that merged (KAN-283).
 
 Worktrees have no `.venv` of their own and the editable install points at the main checkout's
 `src/`, so in a worktree run the main checkout's venv by absolute path, from the worktree root, with `PYTHONPATH=src` (PowerShell:

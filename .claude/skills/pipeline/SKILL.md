@@ -53,5 +53,5 @@ integrates. It does not write the code itself.
   `Who did what: Plan: Opus · Scan: Haiku x2 · Code: Sonnet x1 · Verify: Opus · Review: Fable 5.2`
 - If a stage was handed to a different model, name it and say why.
 - Update the line in the PR body each time a stage passes, and always before posting the verifier marker and the top-review marker.
-- Write the result (for example "Review: Fable 5.2 (PASS on <short sha>)"), never "pending".
-- The PR gate refuses a "Who did what" line that still says "pending" (KAN-300).
+- Write the result (for example "Review: Fable 5.2 (PASS on <short sha>)"), never a placeholder such as "pending" or "in progress".
+- The PR gate refuses a "Who did what" line that still says "pending" or "in progress" (KAN-300).

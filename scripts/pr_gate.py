@@ -8,7 +8,7 @@ Stdlib only. Fail closed: anything unknown, missing or odd means "risky" / "not 
         --comments comments.json [--ignore-check NAME ...]
     python scripts/pr_gate.py paused --issues issues.json
 
-``classify`` prints ``low-risk``, ``risky`` or ``needs-vickey`` on stdout (needs-vickey beats risky beats low-risk; agent definitions are read with ``--repo`` and ``--ref``, else they need Vickey); ``merge-ready`` prints ``ready``, ``not-ready`` or ``no-real-check`` (the only thing missing is the "Real check:" line, KAN-298; a "Who did what" line that still says pending is a ``not-ready`` reason, KAN-300); ``paused`` prints ``paused`` or ``running`` (KAN-229).
+``classify`` prints ``low-risk``, ``risky`` or ``needs-vickey`` on stdout (needs-vickey beats risky beats low-risk; agent definitions are read with ``--repo`` and ``--ref``, else they need Vickey); ``merge-ready`` prints ``ready``, ``not-ready`` or ``no-real-check`` (the only thing missing is the "Real check:" line, KAN-298; a "Who did what" line that still says pending or in progress is a ``not-ready`` reason, KAN-300); ``paused`` prints ``paused`` or ``running`` (KAN-229).
 The reasons go to stderr and, when set, to ``$GITHUB_STEP_SUMMARY``.
 """
 
@@ -571,20 +571,21 @@ def has_real_check(body: str | None) -> bool:
     return False
 
 
-PENDING_STEP_REASON = "the 'Who did what' line in the PR description still says pending"
+PENDING_STEP_REASON = "the 'Who did what' line in the PR description still says pending or in progress"
 
 # After spaces, an optional list marker, quote marks, heading marks and emphasis: the words "who did what".
 _WHO_DID_WHAT_RE = re.compile(
-    r"^ *(?:(?:[-*+]|\d{1,9}[.)]) *)?(?:> *)*(?:\#{1,6} *)?[*_]*who did what", re.IGNORECASE
+    r"^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]*)?(?:>[ \t]*)*(?:\#{1,6}[ \t]*)?[*_]*who[ \t]+did[ \t]+what",
+    re.IGNORECASE,
 )
-_PENDING_RE = re.compile(r"\bpending\b", re.IGNORECASE)
+_PENDING_RE = re.compile(r"\bpending\b|\bin[ \t]+progress\b", re.IGNORECASE)
 
 
 def has_pending_step(body: str | None) -> bool:
-    """Whether a "Who did what" line in a PR description still says "pending" (KAN-300).
+    """Whether a "Who did what" line in a PR description still says "pending" or "in progress" (KAN-300).
 
     Only a line that starts with "who did what" (after spaces, a list marker, quote marks, heading marks and
-    emphasis) counts; the whole word "pending" anywhere on it is flagged, even inside an HTML comment or a code span
+    emphasis) counts; the whole word "pending" or the words "in progress" anywhere on it is flagged, even inside an HTML comment or a code span
     (fail closed). "Pending" on any other line (Operon has a PENDING verification state) is not flagged.
     """
     if not isinstance(body, str):
@@ -608,7 +609,7 @@ def merge_ready(
     ``risky`` PR (labelled risky, classified risky) also needs a top-review marker for the head from an owner or
     collaborator, in a comment of its own (one that does not also carry the verifier marker). Every PR also needs a
     "Real check:" line with a link in its description (``has_real_check``, KAN-298); when it is the only reason, the
-    CLI prints ``no-real-check``. A "Who did what" line that still says pending (``has_pending_step``, KAN-300) is
+    CLI prints ``no-real-check``. A "Who did what" line that still says pending or in progress (``has_pending_step``, KAN-300) is
     refused.
     """
     why: list[str] = []

@@ -1183,22 +1183,26 @@ _WDW_389 = "Who did what: Plan: Opus · Scan: Haiku x2 · Code: Sonnet x1 · Ver
 def test_merge_refuses_a_pending_who_did_what_line() -> None:
     for line in (
         _WDW_389,
-        "Who did what: Plan: Opus · Scan: Haiku x2 · Code: Sonnet x1 · Verify: Opus · Review: Fable 5.2 (pending)",
         "- **Who did what:** Plan: Opus · Review: Fable 5.2 (Pending)",
         "who did what: verify pending",
         "> ## _Who did what_: Review PENDING",
+        "Who did what: Plan: Opus · Verify: Opus (in progress) · Review: Fable 5.2 (In Progress)",
+        "\tWho did what: Review: pending",
     ):
         assert _ready(pr=_pr(body=f"{_RC}\n{line}\n")) == (False, [gate.PENDING_STEP_REASON]), line
     assert gate.has_pending_step("Who did what: Plan: Opus <!-- pending --> `pending`")
 
 
 def test_a_finished_who_did_what_line_is_ready() -> None:
-    done = "Who did what: Plan: Opus · Verify: Opus · Review: Fable 5.2 (PASS on 92e2157)"
-    assert _ready(pr=_pr(body=f"{_RC}\n{done}\n")) == (True, ["all gates passed"])
+    for done in (
+        "Who did what: Plan: Opus · Verify: Opus · Review: Fable 5.2 (PASS on 92e2157)",
+        "Who did what: Plan: Opus · Verify: Opus (PASS on d3b940b) · Review: Fable 5.2 (PASS on d3b940b)",
+    ):
+        assert _ready(pr=_pr(body=f"{_RC}\n{done}\n")) == (True, ["all gates passed"])
 
 
 def test_pending_outside_the_who_did_what_line_is_not_flagged() -> None:
-    body = f"{_RC}\nVerification state PENDING is kept\nWho did what: Plan: Opus · Spending: none\n"
+    body = f"{_RC}\nWork is in progress elsewhere\nVerification state PENDING is kept\nWho did what: Plan: Opus · Spending: none\n"
     assert not gate.has_pending_step(body)
     assert _ready(pr=_pr(body=body)) == (True, ["all gates passed"])
     assert not gate.has_pending_step(None)

@@ -480,9 +480,22 @@ def is_fork_pr(pr: dict[str, Any]) -> bool:
 REAL_CHECK_REASON = "no 'Real check:' line with a link in the PR description"
 
 _HTML_COMMENT_RE = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
-_FENCE_RE = re.compile(r"^ {0,3}(```|~~~)")
+_FENCE_RE = re.compile(r"^ {0,3}(?P<fence>`{3,}|~{3,})(?P<info>.*)$")
 _REAL_CHECK_LINE_RE = re.compile(r"^ {0,3}(?:[ \t#>*_+-]|\d{1,9}[.)])*real check[ \t]*[*_]*[ \t]*:(?P<rest>.*)$", re.IGNORECASE)
 _LINK_RE = re.compile(r"https?://\S")
+
+
+def _indent_width(line: str) -> int:
+    """Columns of leading whitespace, a tab going to the next multiple of 4 (markdown code is 4 or more)."""
+    col = 0
+    for ch in line:
+        if ch == " ":
+            col += 1
+        elif ch == "\t":
+            col += 4 - col % 4
+        else:
+            break
+    return col
 
 
 def has_real_check(body: str | None) -> bool:
@@ -494,12 +507,17 @@ def has_real_check(body: str | None) -> bool:
     """
     if not isinstance(body, str):
         return False
-    in_fence = False
+    fence = ""  # the opening fence while inside a code block (CommonMark: same character, at least as long to close)
     for line in _HTML_COMMENT_RE.sub("", body).splitlines():
-        if _FENCE_RE.match(line):
-            in_fence = not in_fence
+        f = _FENCE_RE.match(line)
+        if fence:
+            if f and f.group("fence")[0] == fence[0] and len(f.group("fence")) >= len(fence) and not f.group("info").strip():
+                fence = ""
             continue
-        if in_fence or line.startswith(("    ", "\t")):
+        if f and not (f.group("fence")[0] == "`" and "`" in f.group("info")):
+            fence = f.group("fence")
+            continue
+        if _indent_width(line) >= 4:
             continue
         m = _REAL_CHECK_LINE_RE.match(line)
         if m and _LINK_RE.search(m.group("rest")):

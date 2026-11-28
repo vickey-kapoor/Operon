@@ -1201,3 +1201,27 @@ def test_real_check_accepts_numbered_and_plus_list_prefixes() -> None:
         suffix = "**" if prefix.endswith("**") else ""
         text = f"{prefix}Real check:{suffix} {RC_LINK}"
         assert gate.has_real_check(text), text
+
+
+def test_real_check_fences_close_only_on_a_matching_fence() -> None:
+    line = f"Real check: {RC_LINK}"
+    assert not gate.has_real_check(f"````\n```\n{line}\n````")  # inner ``` does not close a 4-backtick fence
+    assert not gate.has_real_check(f"```\n~~~\n{line}\n```")  # ~~~ does not close a ``` fence
+    assert not gate.has_real_check(f"```\n```x\n{line}\n```")  # a closing fence has no info string
+    assert gate.has_real_check(f"````\n```\ninner\n````\n{line}")  # properly closed long fence, line after counts
+    assert gate.has_real_check(f"```\ncode\n`````\n{line}")  # a longer fence closes too
+    assert gate.has_real_check(f"``` a`b\n{line}")  # a backtick info string with a backtick is not a fence
+
+
+def test_real_check_indent_counts_tabs_as_columns() -> None:
+    line = f"Real check: {RC_LINK}"
+    assert not gate.has_real_check(f" \t{line}")  # 1 space + tab = 4 columns
+    assert not gate.has_real_check(f"\t{line}")
+    assert not gate.has_real_check(f"  \t{line}")
+    assert gate.has_real_check(f"   {line}")  # 3 columns is still a paragraph
+
+
+def test_real_check_backtick_info_string_line_does_not_open_a_fence() -> None:
+    line = f"Real check: {RC_LINK}"
+    assert not gate.has_real_check(f"```code``` {line}")  # not a fence, and not a Real check line either
+    assert gate.has_real_check(f"```code``` x\n{line}")  # no fence was opened, so the next line counts

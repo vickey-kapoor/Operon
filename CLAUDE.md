@@ -188,6 +188,7 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - A Google workload identity mapping read an OIDC claim (`job_workflow_ref`) that a directly started run may not carry -> map an optional claim as `"claim" in assertion ? assertion.claim : <fallback>`, and check a direct start and a called run both sign in at apply (KAN-224, #386).
 - The pipeline skill was named here but never committed, so cloud story threads planned and coded everything in one Opus session (PRs 369-386) -> the skill lives in `.claude/skills/pipeline/` and every PR body records who did each step (#387, 2026-11-27).
 - A reusable workflow's job with `environment:` got an empty key because the caller didn't pass it -> callers pass environment secrets by name (never `secrets: inherit`) (KAN-282, #391) [guarded: `test_every_caller_of_a_paid_workflow_passes_the_gemini_key`, `test_no_caller_inherits_secrets`].
+- PRs 389 and 390 merged with only unit tests and reviews behind them -> every gate-merged PR needs a "Real check:" line with a real $0 run link; the gate refuses without it (KAN-298) [guarded: `test_merge_needs_a_real_check_line`].
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
 
@@ -197,7 +198,7 @@ The main session does not edit code. Each PR body names who did each step ("Who 
 
 **Merging (Vickey, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit approval").** This is the
 full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
-- A PR may merge once its checks are green, every Codex finding is answered, and a fresh verifier has passed on the
+- A PR may merge once its checks are green, every Codex finding is answered, its description has a "Real check:" line with a link to a real $0 run (KAN-298), and a fresh verifier has passed on the
   head commit (the main session then posts `<!-- operon-verifier: PASS <full head sha> -->` on the PR).
 - The PR gate (`.github/workflows/pr-gate.yml`, `scripts/pr_gate.py`, KAN-216/KAN-227) labels each PR `low-risk`,
   `risky` or `needs-vickey` (the PRs that wait for Vickey's own "merge": every workflow and action file, the paid-run machinery and the merge check, see the Paid-run exception below), and merges ready `low-risk` and `risky` PRs itself when the repo variable `OPERON_AUTO_MERGE`

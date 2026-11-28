@@ -1,5 +1,6 @@
 # PR gate (KAN-216, KAN-227): label every PR low-risk, risky or needs-vickey, and merge the low-risk and risky ones that are
 # fully reviewed (risky also needs a Fable 5.2 top-review marker). A needs-vickey PR is never merged here: Vickey merges it.
+# A PR whose only gap is the "Real check:" line with a link (KAN-298) is not merged: the sweep leaves one note per head.
 #
 # All decisions live in scripts/pr_gate.py (offline tested). The merge step only runs when the repo
 # variable OPERON_AUTO_MERGE is "on". Unset (the default) is trial mode: label, plus one "would merge"
@@ -137,6 +138,19 @@ jobs:
               --checks "$d/checks.json" --status "$d/status.json" --comments "$d/comments.json" \
               --ignore-check "Label PR" --ignore-check "Sweep and merge" 2>"$d/why.txt") || verdict=error
             cat "$d/why.txt"
+            if [ "$verdict" = no-real-check ]; then
+              # KAN-298: never merge, never label; one note per head commit, then on to the next PR.
+              if [ "$(pause_state)" != running ]; then
+                echo "Auto-work is paused: merging nothing and posting no notes."
+                exit 0
+              fi
+              if ! jq -e --arg m "operon-gate-real-check: $sha" \
+                'any(.[]; .user.login == "github-actions[bot]" and ((.body // "") | contains($m)))' "$d/comments.json" > /dev/null; then
+                printf '<!-- operon-gate-real-check: %s -->\nNot merged yet: the description has no "Real check:" line with a link to a real $0 run (a real end-to-end test run, a GitHub dry run, or a replay of real data). Add one and the next sweep can merge it (KAN-298).\n' "$sha" > "$d/real-check.md"
+                gh pr comment "$n" --repo "$REPO" --body-file "$d/real-check.md" || echo "::warning::PR $n: the real-check note failed"
+              fi
+              continue
+            fi
             [ "$verdict" = ready ] || continue
             if [ "$(pause_state)" != running ]; then
               echo "Auto-work is paused: merging nothing and posting no notes."

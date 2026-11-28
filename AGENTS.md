@@ -264,7 +264,7 @@ Do not commit, push, merge, or create a pull request unless the user has authori
 
 Exception, merging (owner's rule, 2026-11-26: "Every PR can auto-merge but no paid runs without my explicit
 approval"): the full rule is the "Merging" part of the Dev workflow section in `CLAUDE.md`; follow it exactly. In short:
-a PR merges once checks are green, Codex is answered and the fresh verifier marker is on the head; a `risky` PR also
+a PR merges once checks are green, Codex is answered, its description has a "Real check:" line with a link to a real $0 run (KAN-298) and the fresh verifier marker is on the head; a `risky` PR also
 needs a top-model review (today Fable 5.2) in a fresh session that is not the coordinator and did not write or verify
 it; a PR touching a GitHub workflow or action file, the paid-run machinery or the merge check (`evals/**` except JSON
 recordings, `scripts/**`, price tables, model defaults and ids, model clients, settings; the exact list is in
@@ -281,6 +281,7 @@ An implementation task is complete only when:
 - Relevant architectural invariants remain intact.
 - Appropriate tests have been added or updated.
 - A bug fix adds a test that fails without the fix and passes with it. Where the bug shows through the real loop, put it in a free end-to-end suite (`tests/browser_e2e`, `tests/desktop_e2e`); otherwise an offline test.
+- Every PR has a "Real check:" line in its description with a link to a real $0 run (real end-to-end test run, GitHub dry run, or replay of real data); the gate refuses to merge without it (KAN-298).
 - A behavior change (anything under `src/`) shows its Proof in the PR (`.github/pull_request_template.md`): a named test that fails without the change, or the e2e evidence artifact.
 - A fix for a mistake caught in review, by Codex, or by a failed run adds its lesson: one line in `CLAUDE.md` "Lessons", or a guard in `tests/test_invariants.py` if code can check it.
 - Applicable validation has passed, or unexecuted/failed checks are clearly documented.

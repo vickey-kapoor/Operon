@@ -22,14 +22,14 @@ def _ci_jobs() -> dict[str, Any]:
     return yaml.safe_load((WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))["jobs"]
 
 
-def test_pr_template_has_the_three_headings_in_order() -> None:
+def test_pr_template_has_the_four_headings_in_order() -> None:
     """KAN-213: PRs without a Proof section slip through; the template asks for it."""
     path = ROOT / ".github" / "pull_request_template.md"
     assert path.is_file()
     text = path.read_text(encoding="utf-8")
     assert text.startswith("## What and why")
     headings = re.findall(r"^## .+$", text, flags=re.MULTILINE)
-    assert headings == ["## What and why", "## Proof", "## Risk?"]
+    assert headings == ["## What and why", "## Proof", "## Real check", "## Risk?"]
 
 
 @pytest.mark.parametrize("job", E2E_JOBS)

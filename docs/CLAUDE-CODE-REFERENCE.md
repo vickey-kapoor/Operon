@@ -14,7 +14,7 @@ Last updated: 2026-11-28. Contains no secrets: keys live in GitHub secrets (the 
 ### Merging and PRs
 - **Every PR can merge itself, but no paid run without Vickey's explicit OK** (Vickey, 2026-11-26). The full rule
   is the "Merging" part of the Dev workflow section in `CLAUDE.md`; follow it exactly. In short: checks green, Codex
-  answered and the verifier marker on the head; `risky` PRs also need a top-model (today Fable 5.2) review in a fresh
+  answered, a "Real check:" line with a link to a real $0 run in the PR description (KAN-298) and the verifier marker on the head; `risky` PRs also need a top-model (today Fable 5.2) review in a fresh
   session that is not the coordinator or the author; PRs labelled `needs-vickey` (every workflow or action file, evals
   except JSON recordings, scripts, the gate's tests, price tables, model defaults and ids, model clients, settings;
   exact list in `CLAUDE.md`) wait for Vickey's "merge" for that PR; the rules files are only `risky`. The gate does the

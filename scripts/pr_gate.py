@@ -8,7 +8,7 @@ Stdlib only. Fail closed: anything unknown, missing or odd means "risky" / "not 
         --comments comments.json [--ignore-check NAME ...]
     python scripts/pr_gate.py paused --issues issues.json
 
-``classify`` prints ``low-risk``, ``risky`` or ``needs-vickey`` on stdout (needs-vickey beats risky beats low-risk; agent definitions are read with ``--repo`` and ``--ref``, else they need Vickey); ``merge-ready`` prints ``ready`` or ``not-ready``; ``paused`` prints ``paused`` or ``running`` (KAN-229).
+``classify`` prints ``low-risk``, ``risky`` or ``needs-vickey`` on stdout (needs-vickey beats risky beats low-risk; agent definitions are read with ``--repo`` and ``--ref``, else they need Vickey); ``merge-ready`` prints ``ready``, ``not-ready`` or ``no-real-check`` (the only thing missing is the "Real check:" line, KAN-298); ``paused`` prints ``paused`` or ``running`` (KAN-229).
 The reasons go to stderr and, when set, to ``$GITHUB_STEP_SUMMARY``.
 """
 
@@ -477,6 +477,27 @@ def is_fork_pr(pr: dict[str, Any]) -> bool:
     return head_repo is None or head_repo != base_repo
 
 
+REAL_CHECK_REASON = "no 'Real check:' line with a link in the PR description"
+
+_HTML_COMMENT_RE = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
+_REAL_CHECK_LINE_RE = re.compile(r"^[ \t#>*_-]*real check[ \t]*[*_]*[ \t]*:(?P<rest>.*)$", re.IGNORECASE)
+_LINK_RE = re.compile(r"https?://\S")
+
+
+def has_real_check(body: str | None) -> bool:
+    """Whether a PR description has a "Real check:" line with a link on the same line (KAN-298).
+
+    HTML comments are removed first (an unclosed ``<!--`` runs to the end), so the template's hint never counts.
+    """
+    if not isinstance(body, str):
+        return False
+    for line in _HTML_COMMENT_RE.sub("", body).splitlines():
+        m = _REAL_CHECK_LINE_RE.match(line)
+        if m and _LINK_RE.search(m.group("rest")):
+            return True
+    return False
+
+
 def merge_ready(
     pr: dict[str, Any],
     checks: list[dict[str, Any]],
@@ -491,7 +512,9 @@ def merge_ready(
 
     ``risk`` is a fresh classification of the PR's files. A fork PR and a ``needs-vickey`` PR are never ready. A
     ``risky`` PR (labelled risky, classified risky) also needs a top-review marker for the head from an owner or
-    collaborator, in a comment of its own (one that does not also carry the verifier marker).
+    collaborator, in a comment of its own (one that does not also carry the verifier marker). Every PR also needs a
+    "Real check:" line with a link in its description (``has_real_check``, KAN-298); when it is the only reason, the
+    CLI prints ``no-real-check``.
     """
     why: list[str] = []
     head = (pr.get("head") or {}).get("sha") or ""
@@ -502,6 +525,8 @@ def merge_ready(
     labels = {(x.get("name") if isinstance(x, dict) else x) for x in pr.get("labels") or []}
     if PAID in labels or LEGACY_PAID in labels or risk == PAID:
         return False, ["needs Vickey's merge: touches paid-run or merge-check files"]
+    if not has_real_check(pr.get("body")):
+        why.append(REAL_CHECK_REASON)
     level = RISKY if RISKY in labels or risk == RISKY else LOW
     if len(labels & {LOW, RISKY}) != 1:
         why.append(f"not labelled exactly one of {LOW} or {RISKY}")
@@ -661,7 +686,7 @@ def main(argv: list[str] | None = None) -> int:
         risk=risk,
         status=_load(a.status),
     )
-    verdict = "ready" if ok else "not-ready"
+    verdict = "ready" if ok else "no-real-check" if why == [REAL_CHECK_REASON] else "not-ready"
     _report(verdict, why, f"Merge gate for #{pr.get('number')}")
     print(verdict)
     return 0

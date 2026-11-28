@@ -8,7 +8,7 @@ Stdlib only. Fail closed: anything unknown, missing or odd means "risky" / "not 
         --comments comments.json [--ignore-check NAME ...]
     python scripts/pr_gate.py paused --issues issues.json
 
-``classify`` prints ``low-risk``, ``risky`` or ``needs-vickey`` on stdout (needs-vickey beats risky beats low-risk; agent definitions are read with ``--repo`` and ``--ref``, else they need Vickey); ``merge-ready`` prints ``ready`` or ``not-ready``; ``paused`` prints ``paused`` or ``running`` (KAN-229).
+``classify`` prints ``low-risk``, ``risky`` or ``needs-vickey`` on stdout (needs-vickey beats risky beats low-risk; agent definitions are read with ``--repo`` and ``--ref``, else they need Vickey); ``merge-ready`` prints ``ready``, ``not-ready`` or ``no-real-check`` (the only thing missing is the "Real check:" line, KAN-298); ``paused`` prints ``paused`` or ``running`` (KAN-229).
 The reasons go to stderr and, when set, to ``$GITHUB_STEP_SUMMARY``.
 """
 
@@ -477,6 +477,100 @@ def is_fork_pr(pr: dict[str, Any]) -> bool:
     return head_repo is None or head_repo != base_repo
 
 
+REAL_CHECK_REASON = "no 'Real check:' line with a link in the PR description"
+
+# A line that looks like a code fence after any run of spaces, tabs, quote marks and list markers: the scan stops there.
+_FENCE_LIKE_RE = re.compile(r"^(?:[ \t>]|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t]))*(?:```|~~~)")
+# A top-level line (no indentation, no quote): one optional list marker, one optional heading mark, then the words.
+_REAL_CHECK_LINE_RE = re.compile(
+    r"^(?:(?:[-*+]|\d{1,9}[.)]) )?(?:\#{1,6} )?[*_]*real check *[*_]* *:(?P<rest>.*)$", re.IGNORECASE
+)
+_LINK_RE = re.compile(r"https?://\S")
+_LINE_BREAK_RE = re.compile(r"\r\n|\r|\n")  # not str.splitlines(): it also splits on \x0b, \x0c, \x85, U+2028 ...
+
+
+# The scan also stops at a blockquote (after spaces and list markers), which can swallow a following line.
+_QUOTE_START_RE = re.compile(r"^(?:[ \t]|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t]))*>")
+_AUTOLINK_RE = re.compile(r"<[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*>")
+_TAG_OPENER_RE = re.compile(r"<[/?!A-Za-z]")  # raw HTML tag, closing tag, processing instruction, declaration, CDATA
+
+
+def _scan_line(line: str, in_comment: bool) -> tuple[str, bool, bool]:
+    """One line, left to right: ``(visible text, comment still open at the end, stop)``.
+
+    Inside a comment, text is skipped up to ``-->``. Outside, a backtick run of length n starts a code span that the next
+    run of exactly n on the line closes; its text is literal (kept in the visible text, never checked for comments or
+    tags), and a run with no partner means stop. ``<!--`` starts a comment. A raw HTML tag, ``</``, ``<?`` or any other
+    ``<!`` means stop; an autolink such as ``<https://x>`` is plain text.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(line)
+    while i < n:
+        if in_comment:
+            end = line.find("-->", i)
+            if end < 0:
+                break
+            i, in_comment = end + 3, False
+            continue
+        c = line[i]
+        if c == "`":
+            run = re.compile(r"`+").match(line, i)
+            assert run is not None
+            size = run.end() - i
+            close = next((m for m in re.finditer(r"`+", line[run.end() :]) if len(m.group()) == size), None)
+            if close is None:
+                return "".join(out), in_comment, True
+            stop_at = run.end() + close.end()
+            out.append(line[i:stop_at])
+            i = stop_at
+        elif line.startswith("<!--", i):
+            in_comment = True
+            i += 4
+        elif c == "<":
+            auto = _AUTOLINK_RE.match(line, i)
+            if auto:
+                out.append(auto.group())
+                i = auto.end()
+            elif _TAG_OPENER_RE.match(line, i):
+                return "".join(out), in_comment, True
+            else:
+                out.append(c)
+                i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out), in_comment, False
+
+
+def has_real_check(body: str | None) -> bool:
+    """Whether a PR description has a "Real check:" line with a link on the same line (KAN-298).
+
+    The line must be a top-level line (column 0, no quote, at most one list marker and one heading mark before the
+    words), must match as written (a comment before the words does not count, and the link must be outside comments),
+    and must come before any code block, quote or HTML. Fail closed by construction: lines are split on CR, LF or CRLF
+    only, HTML comments (may span lines, an unclosed one runs to the end) never count, and the scan stops, so that line
+    and everything after it cannot count, at the first line that is fence-like (``` or ~~~ after any spaces, quote
+    marks and list markers, even inside a comment) or, outside comments and code spans (``_scan_line``), has a raw HTML
+    tag, ``<?`` or ``<!`` (other than a comment), starts with a quote mark, or leaves a backtick run unmatched. Text
+    inside a matched code span is literal. This is not a Markdown parser.
+    """
+    if not isinstance(body, str):
+        return False
+    in_comment = False
+    for raw in _LINE_BREAK_RE.split(body):
+        if _FENCE_LIKE_RE.match(raw):
+            return False
+        line, in_comment, stop = _scan_line(raw, in_comment)
+        if stop or _FENCE_LIKE_RE.match(line) or _QUOTE_START_RE.match(line):
+            return False
+        m_raw = _REAL_CHECK_LINE_RE.match(raw)
+        m = _REAL_CHECK_LINE_RE.match(line)
+        if m_raw and m and _LINK_RE.search(m.group("rest")):
+            return True
+    return False
+
+
 def merge_ready(
     pr: dict[str, Any],
     checks: list[dict[str, Any]],
@@ -491,7 +585,9 @@ def merge_ready(
 
     ``risk`` is a fresh classification of the PR's files. A fork PR and a ``needs-vickey`` PR are never ready. A
     ``risky`` PR (labelled risky, classified risky) also needs a top-review marker for the head from an owner or
-    collaborator, in a comment of its own (one that does not also carry the verifier marker).
+    collaborator, in a comment of its own (one that does not also carry the verifier marker). Every PR also needs a
+    "Real check:" line with a link in its description (``has_real_check``, KAN-298); when it is the only reason, the
+    CLI prints ``no-real-check``.
     """
     why: list[str] = []
     head = (pr.get("head") or {}).get("sha") or ""
@@ -502,6 +598,8 @@ def merge_ready(
     labels = {(x.get("name") if isinstance(x, dict) else x) for x in pr.get("labels") or []}
     if PAID in labels or LEGACY_PAID in labels or risk == PAID:
         return False, ["needs Vickey's merge: touches paid-run or merge-check files"]
+    if not has_real_check(pr.get("body")):
+        why.append(REAL_CHECK_REASON)
     level = RISKY if RISKY in labels or risk == RISKY else LOW
     if len(labels & {LOW, RISKY}) != 1:
         why.append(f"not labelled exactly one of {LOW} or {RISKY}")
@@ -661,7 +759,7 @@ def main(argv: list[str] | None = None) -> int:
         risk=risk,
         status=_load(a.status),
     )
-    verdict = "ready" if ok else "not-ready"
+    verdict = "ready" if ok else "no-real-check" if why == [REAL_CHECK_REASON] else "not-ready"
     _report(verdict, why, f"Merge gate for #{pr.get('number')}")
     print(verdict)
     return 0

@@ -184,6 +184,7 @@ def _pr(**over: Any) -> dict[str, Any]:
         "labels": [{"name": "low-risk"}],
         "head": {"sha": HEAD, "repo": {"full_name": "o/r"}},
         "base": {"ref": "main", "repo": {"full_name": "o/r"}},
+        "body": "Real check: https://github.com/vickey-kapoor/Operon/actions/runs/1 showed X",
     }
     pr.update(over)
     return pr
@@ -1038,7 +1039,11 @@ def test_sweep_checks_the_pause_again_before_each_merge_and_note() -> None:
     loop = _sweep_run().split("while read -r n", 1)[1]
     again = loop.index('"$(pause_state)"')
     assert again < loop.index("gh pr merge") and again < loop.index("gh pr comment")
-    assert loop.index('[ "$verdict" = ready ] || continue') < again
+    # Both paths re-check the pause before acting: the no-real-check note, then (after the ready filter) the merge.
+    first = loop.index('[ "$verdict" = no-real-check ]')
+    assert first < again < loop.index('[ "$verdict" = ready ] || continue')
+    ready_path = loop.split('[ "$verdict" = ready ] || continue', 1)[1]
+    assert ready_path.index('"$(pause_state)"') < ready_path.index("gh pr merge")
 
 
 FAKE_GH = """#!/bin/sh
@@ -1111,3 +1116,165 @@ def test_daily_note_says_paused() -> None:
 def test_claude_md_states_the_pause_rule() -> None:
     text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     assert "While an open issue labelled `auto-work-paused` exists" in text
+
+
+# KAN-298: every PR the gate merges needs a "Real check:" line with a link to a real $0 run.
+RC_LINK = "https://github.com/o/r/actions/runs/1"
+
+
+def test_merge_needs_a_real_check_line() -> None:
+    for body in (None, "", "Summary only", 5):
+        assert _ready(pr=_pr(body=body)) == (False, [gate.REAL_CHECK_REASON])
+    assert _ready(pr=_pr(body=f"Real check: {RC_LINK} showed X"))[0] is True
+
+
+def test_real_check_line_without_a_link_does_not_count() -> None:
+    assert not gate.has_real_check("Real check: ran it by hand")
+    assert not gate.has_real_check("Real check: https://")  # nothing after the scheme
+
+
+def test_real_check_in_an_html_comment_does_not_count() -> None:
+    hint = f"Real check: <!-- Required: a link, e.g. Real check: {RC_LINK} -->"
+    assert not gate.has_real_check(hint)
+    assert not gate.has_real_check(f"<!--\nReal check: {RC_LINK}\n-->")
+    assert not gate.has_real_check(f"text\n<!-- unclosed\nReal check: {RC_LINK}")
+
+
+def test_real_check_forms_that_count() -> None:
+    assert gate.has_real_check(f"- **Real check:** {RC_LINK}")
+    assert gate.has_real_check(f"**Real check**: {RC_LINK}")
+    assert gate.has_real_check(f"## Real check\nReal check: see {RC_LINK}")
+    assert gate.has_real_check(f"<!-- hint -->\nReal check: {RC_LINK}")
+
+
+def test_real_check_needs_the_colon_form_and_the_link_on_the_same_line() -> None:
+    assert not gate.has_real_check(f"Real checks are good {RC_LINK}")
+    assert not gate.has_real_check(f"Real check\n{RC_LINK}")
+    assert not gate.has_real_check(f"Real check:\n{RC_LINK}")
+    assert not gate.has_real_check(f"See the Real check: {RC_LINK}")  # must start the line
+
+
+def _cli_verdict(tmp_path: Path, pr: dict[str, Any], comments: list[dict[str, Any]], capsys: pytest.CaptureFixture[str]) -> str:
+    def w(name: str, data: Any) -> str:
+        f = tmp_path / name
+        f.write_text(json.dumps(data), encoding="utf-8")
+        return str(f)
+
+    argv = [
+        "merge-ready", "--pr", w("pr.json", pr), "--files", w("files.json", [{"filename": "docs/a.md"}]),
+        "--checks", w("checks.json", GOOD_CHECKS), "--comments", w("comments.json", comments),
+        "--status", w("status.json", GOOD_STATUS),
+    ]  # fmt: skip
+    assert gate.main(argv) == 0
+    return capsys.readouterr().out.strip()
+
+
+def test_cli_prints_no_real_check_only_when_it_is_the_only_reason(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    good = [_codex(), _marker()]
+    assert _cli_verdict(tmp_path, _pr(body=""), good, capsys) == "no-real-check"
+    assert _cli_verdict(tmp_path, _pr(body="", draft=True), good, capsys) == "not-ready"
+    assert _cli_verdict(tmp_path, _pr(body=""), [_codex()], capsys) == "not-ready"
+
+
+def test_sweep_notes_a_missing_real_check_once_per_head_and_never_merges_it() -> None:
+    loop = _sweep_run().split("while read -r n", 1)[1]
+    branch = loop.split('[ "$verdict" = no-real-check ]', 1)[1].split('[ "$verdict" = ready ] || continue', 1)[0]
+    assert "operon-gate-real-check: $sha" in branch
+    assert "github-actions[bot]" in branch and "contains($m)" in branch  # dedupe on the bot and the head sha
+    assert "--body-file" in branch and "gh pr comment" in branch
+    assert "before the first code block, quote or HTML in the description. Put it on its own top-level line near the top." in branch
+    assert branch.index('"$(pause_state)"') < branch.index("gh pr comment")
+    assert "gh pr merge" not in branch and "--add-label" not in branch
+    assert "\n    continue\n" in branch
+
+
+def test_real_check_prefix_forms_and_top_level_only() -> None:
+    line = f"Real check: {RC_LINK}"
+    for text in (f"1. {line}", f"2) {line}", f"+ {line}", f"- {line}", f"## {line}", f"- **Real check:** {RC_LINK}"):
+        assert gate.has_real_check(text), text
+    for text in (f"> {line}", f"- > {line}", f"  {line}", f"\t{line}", f"- Proof\n    - {line}", f"    {line}"):
+        assert not gate.has_real_check(text), text  # quoted or indented: not a top-level line (nested bullets too)
+
+
+def test_real_check_must_come_before_any_code_block() -> None:
+    line = f"Real check: {RC_LINK}"
+    assert gate.has_real_check(f"{line}\n```\ncode\n```")
+    assert not gate.has_real_check(f"```\n{line}\n```")
+    assert not gate.has_real_check(f"```\ncode\n```\n{line}")  # after a normal closed code block
+    assert not gate.has_real_check(f"~~~\ncode\n~~~\n{line}")
+    assert not gate.has_real_check(f"> ```text\n> {line}\n> ```")
+    assert not gate.has_real_check(f"- ```text\n  {line}\n  ```")
+    assert not gate.has_real_check(f"> - ```text\n> - {line}\n> - ```")
+    assert not gate.has_real_check(f"1. ```\n{line}")
+    # Codex round 3, reproducer 1: a "- ```" line inside a top-level fence does not close it.
+    assert not gate.has_real_check(f"```\n- ```\n{line}\n```")
+    # Codex round 3, reproducer 2: indented text with no parent list is code and does not count.
+    assert not gate.has_real_check(f"intro\n\n    - {line}")
+    # The scan stops at a fence-like line even inside an HTML comment.
+    assert not gate.has_real_check(f"<!--\n```\n-->\n{line}")
+
+
+def test_real_check_html_comments_and_line_breaks() -> None:
+    line = f"Real check: {RC_LINK}"
+    assert not gate.has_real_check(f"<!-- hint\n{line}\n-->")  # a comment spanning lines
+    assert not gate.has_real_check(f"x\n<!-- unclosed\n{line}")
+    assert gate.has_real_check(f"<!-- a --> <!-- b -->\n{line}")
+    assert gate.has_real_check(f"intro\r\n{line}") and gate.has_real_check(f"intro\r{line}")
+    for sep in ("\x0b", "\x0c", "\x85", "\u2028", "\u2029"):
+        assert not gate.has_real_check(f"intro{sep}{line}"), repr(sep)  # not a line break: still one line
+
+
+def test_real_check_stops_at_html_quotes_and_open_code_spans() -> None:
+    line = f"Real check: {RC_LINK}"
+    for before in (
+        "<pre>",
+        "<details>",
+        "<div hidden>",
+        '<img alt="',
+        "</p>",
+        "> quote",
+        "- > quote",
+        "text with `an open span",
+        "x ``` y",
+    ):
+        assert not gate.has_real_check(f"{before}\n{line}"), before
+    assert not gate.has_real_check(f'<img alt="\n{line}\n">')  # the tag spans two lines
+    assert not gate.has_real_check(f"> lazy\n{line}")  # a lazy blockquote continuation
+    assert not gate.has_real_check(f"`two-line\n{line}\nspan`")
+    assert not gate.has_real_check(f"<!-- x -->{line}")  # a comment before the words: not as written
+    assert not gate.has_real_check(f"Real check: <!-- {RC_LINK} -->")  # the link is only in a comment
+    # Things before it that must not stop the scan.
+    assert gate.has_real_check(f"See <https://example.com/x> and <http://a.b>\n{line}")
+    assert gate.has_real_check(f"Uses `code` and <!-- <pre> -->\n{line}")
+    assert gate.has_real_check(f"{line} <!-- trailing note -->")
+    assert gate.has_real_check(f"{line}\n<pre>")  # after the line, anything goes
+
+
+
+def test_real_check_stops_at_any_unmatched_code_span() -> None:
+    line = f"Real check: {RC_LINK}"
+    assert not gate.has_real_check(f"``example\n{line}\nexample``")  # an even-length run with no partner on its line
+    assert not gate.has_real_check(f"x ``` y\n{line}")  # a mid-line triple run is not a fence but is unmatched
+    assert not gate.has_real_check(f"`a``b\n{line}")  # runs of different lengths do not close each other
+    assert not gate.has_real_check(f"`a` `b\n{line}")
+    assert gate.has_real_check(f"Uses ``a`b`` here\n{line}")  # a matched double-backtick span holding a backtick
+    assert gate.has_real_check(f"Uses `code` and ```x``` spans\n{line}")
+    assert gate.has_real_check(f"Fixes `has_real_check`: see `tests/ci/test_pr_gate.py`.\n\n{line} showed X")
+
+
+def test_real_check_reads_code_spans_as_text_not_html() -> None:
+    line = f"Real check: {RC_LINK}"
+    assert gate.has_real_check(f"Uses `<path>` and `<action>`\n{line}")
+    assert gate.has_real_check(f"Code span `<pre>` and `<!-- x` (no close)\n{line}")
+    assert gate.has_real_check(f"Real check: {RC_LINK} showed `Step N: <action>`")
+    assert gate.has_real_check(f"A `<!-- not a comment` here\n{line}")  # a span's <!-- opens no comment
+    assert gate.has_real_check(f"``a <b> `c` ``\n{line}")
+    assert not gate.has_real_check(f"<?\n{line}\n?>")  # a processing instruction
+    assert not gate.has_real_check(f"<!DOCTYPE x>\n{line}")
+    assert not gate.has_real_check(f"<![CDATA[\n{line}")
+    assert not gate.has_real_check(f"Uses <path> raw\n{line}")  # outside a span it is a tag
+    assert not gate.has_real_check(f"`<pre>` then <pre>\n{line}")
+    assert not gate.has_real_check(f"<!-- c --> <details>\n{line}")  # a comment does not hide a tag after it
+    assert gate.has_real_check(f"<!-- c `unmatched -->\n{line}")  # backticks inside a comment are skipped
+    assert not gate.has_real_check(f"Real check: <!-- {RC_LINK} -->")  # the link must be outside comments
+

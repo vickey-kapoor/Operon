@@ -33,9 +33,14 @@ integrates. It does not write the code itself.
   combined result. The main session does not fix code itself: it sends any breakage back to a coder. It may only
   resolve merge conflicts. Never open a PR with failing tests.
 
-## 5. Verify (Opus)
+## 5. Real $0 check (main session)
+- Run the change for real at $0: a real end-to-end test run, a dry run on GitHub, or a replay of real data. Never a paid run, never a real model key.
+- Put a "Real check:" line in the PR body with the run or log link and what it showed. Tests and reviews alone do not count.
+- Do this before the verifier starts, so it always sees the line. No "Real check:" link, no verifier marker. The PR gate refuses to merge without it and leaves a note (KAN-298).
+
+## 6. Verify (Opus)
 - Start a fresh `verifier` subagent (`.claude/agents/verifier.md`, Opus) that did not write the change. It checks every
-  finding and every fix, and reruns lint, types and tests. Send what it finds back to a coder, then verify again on the
+  finding and every fix, checks the "Real check:" line and that its link shows what the line claims, and reruns lint, types and tests. Send what it finds back to a coder, then verify again on the
   new head.
 - After APPROVE on the head commit, the main session posts `<!-- operon-verifier: PASS <full head sha> -->` on the PR.
 - A Fable 5.2 review in a fresh session is required for `risky` PRs. It is also done for `needs-vickey` PRs, which

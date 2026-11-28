@@ -189,6 +189,7 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - The pipeline skill was named here but never committed, so cloud story threads planned and coded everything in one Opus session (PRs 369-386) -> the skill lives in `.claude/skills/pipeline/` and every PR body records who did each step (#387, 2026-11-27).
 - A reusable workflow's job with `environment:` got an empty key because the caller didn't pass it -> callers pass environment secrets by name (never `secrets: inherit`) (KAN-282, #391) [guarded: `test_every_caller_of_a_paid_workflow_passes_the_gemini_key`, `test_no_caller_inherits_secrets`].
 - PRs 389 and 390 merged with only unit tests and reviews behind them -> every gate-merged PR needs a "Real check:" line with a real $0 run link; the gate refuses without it (KAN-298) [guarded: `tests/ci/test_pr_gate.py::test_merge_needs_a_real_check_line`].
+- PRs 389 and 390 merged still saying "Review: Fable 5.2 (pending)" -> update the "Who did what" line as each stage passes, before each marker; the gate refuses a line that still says pending (KAN-300) [guarded: `tests/ci/test_pr_gate.py::test_merge_refuses_a_pending_who_did_what_line`].
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
 

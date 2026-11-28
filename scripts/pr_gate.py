@@ -8,7 +8,7 @@ Stdlib only. Fail closed: anything unknown, missing or odd means "risky" / "not 
         --comments comments.json [--ignore-check NAME ...]
     python scripts/pr_gate.py paused --issues issues.json
 
-``classify`` prints ``low-risk``, ``risky`` or ``needs-vickey`` on stdout (needs-vickey beats risky beats low-risk; agent definitions are read with ``--repo`` and ``--ref``, else they need Vickey); ``merge-ready`` prints ``ready``, ``not-ready`` or ``no-real-check`` (the only thing missing is the "Real check:" line, KAN-298); ``paused`` prints ``paused`` or ``running`` (KAN-229).
+``classify`` prints ``low-risk``, ``risky`` or ``needs-vickey`` on stdout (needs-vickey beats risky beats low-risk; agent definitions are read with ``--repo`` and ``--ref``, else they need Vickey); ``merge-ready`` prints ``ready``, ``not-ready`` or ``no-real-check`` (the only thing missing is the "Real check:" line, KAN-298; a "Who did what" line that still says pending is a ``not-ready`` reason, KAN-300); ``paused`` prints ``paused`` or ``running`` (KAN-229).
 The reasons go to stderr and, when set, to ``$GITHUB_STEP_SUMMARY``.
 """
 
@@ -571,6 +571,27 @@ def has_real_check(body: str | None) -> bool:
     return False
 
 
+PENDING_STEP_REASON = "the 'Who did what' line in the PR description still says pending"
+
+# After spaces, an optional list marker, quote marks, heading marks and emphasis: the words "who did what".
+_WHO_DID_WHAT_RE = re.compile(
+    r"^ *(?:(?:[-*+]|\d{1,9}[.)]) *)?(?:> *)*(?:\#{1,6} *)?[*_]*who did what", re.IGNORECASE
+)
+_PENDING_RE = re.compile(r"\bpending\b", re.IGNORECASE)
+
+
+def has_pending_step(body: str | None) -> bool:
+    """Whether a "Who did what" line in a PR description still says "pending" (KAN-300).
+
+    Only a line that starts with "who did what" (after spaces, a list marker, quote marks, heading marks and
+    emphasis) counts; the whole word "pending" anywhere on it is flagged, even inside an HTML comment or a code span
+    (fail closed). "Pending" on any other line (Operon has a PENDING verification state) is not flagged.
+    """
+    if not isinstance(body, str):
+        return False
+    return any(_WHO_DID_WHAT_RE.match(raw) and _PENDING_RE.search(raw) for raw in _LINE_BREAK_RE.split(body))
+
+
 def merge_ready(
     pr: dict[str, Any],
     checks: list[dict[str, Any]],
@@ -587,7 +608,8 @@ def merge_ready(
     ``risky`` PR (labelled risky, classified risky) also needs a top-review marker for the head from an owner or
     collaborator, in a comment of its own (one that does not also carry the verifier marker). Every PR also needs a
     "Real check:" line with a link in its description (``has_real_check``, KAN-298); when it is the only reason, the
-    CLI prints ``no-real-check``.
+    CLI prints ``no-real-check``. A "Who did what" line that still says pending (``has_pending_step``, KAN-300) is
+    refused.
     """
     why: list[str] = []
     head = (pr.get("head") or {}).get("sha") or ""
@@ -600,6 +622,8 @@ def merge_ready(
         return False, ["needs Vickey's merge: touches paid-run or merge-check files"]
     if not has_real_check(pr.get("body")):
         why.append(REAL_CHECK_REASON)
+    if has_pending_step(pr.get("body")):
+        why.append(PENDING_STEP_REASON)
     level = RISKY if RISKY in labels or risk == RISKY else LOW
     if len(labels & {LOW, RISKY}) != 1:
         why.append(f"not labelled exactly one of {LOW} or {RISKY}")

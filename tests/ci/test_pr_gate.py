@@ -1176,6 +1176,43 @@ def test_cli_prints_no_real_check_only_when_it_is_the_only_reason(tmp_path: Path
     assert _cli_verdict(tmp_path, _pr(body=""), [_codex()], capsys) == "not-ready"
 
 
+_RC = "Real check: https://github.com/vickey-kapoor/Operon/actions/runs/1 showed X"
+_WDW_389 = "Who did what: Plan: Opus · Scan: Haiku x2 · Code: Sonnet x1 · Verify: Opus · Review: Fable 5.2 (pending)"
+
+
+def test_merge_refuses_a_pending_who_did_what_line() -> None:
+    for line in (
+        _WDW_389,
+        "Who did what: Plan: Opus · Scan: Haiku x2 · Code: Sonnet x1 · Verify: Opus · Review: Fable 5.2 (pending)",
+        "- **Who did what:** Plan: Opus · Review: Fable 5.2 (Pending)",
+        "who did what: verify pending",
+        "> ## _Who did what_: Review PENDING",
+    ):
+        assert _ready(pr=_pr(body=f"{_RC}\n{line}\n")) == (False, [gate.PENDING_STEP_REASON]), line
+    assert gate.has_pending_step("Who did what: Plan: Opus <!-- pending --> `pending`")
+
+
+def test_a_finished_who_did_what_line_is_ready() -> None:
+    done = "Who did what: Plan: Opus · Verify: Opus · Review: Fable 5.2 (PASS on 92e2157)"
+    assert _ready(pr=_pr(body=f"{_RC}\n{done}\n")) == (True, ["all gates passed"])
+
+
+def test_pending_outside_the_who_did_what_line_is_not_flagged() -> None:
+    body = f"{_RC}\nVerification state PENDING is kept\nWho did what: Plan: Opus · Spending: none\n"
+    assert not gate.has_pending_step(body)
+    assert _ready(pr=_pr(body=body)) == (True, ["all gates passed"])
+    assert not gate.has_pending_step(None)
+    assert not gate.has_pending_step(5)  # type: ignore[arg-type]
+
+
+def test_missing_real_check_and_pending_give_both_reasons_and_not_ready(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    pr = _pr(body=_WDW_389)
+    ok, why = _ready(pr=pr)
+    assert not ok and why == [gate.REAL_CHECK_REASON, gate.PENDING_STEP_REASON]
+    assert _cli_verdict(tmp_path, pr, [_codex(), _marker()], capsys) == "not-ready"
+    assert _cli_verdict(tmp_path, _pr(body=f"{_RC}\n{_WDW_389}"), [_codex(), _marker()], capsys) == "not-ready"
+
+
 def test_sweep_notes_a_missing_real_check_once_per_head_and_never_merges_it() -> None:
     loop = _sweep_run().split("while read -r n", 1)[1]
     branch = loop.split('[ "$verdict" = no-real-check ]', 1)[1].split('[ "$verdict" = ready ] || continue', 1)[0]

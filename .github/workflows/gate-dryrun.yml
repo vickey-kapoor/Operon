@@ -1,0 +1,190 @@
+name: Approve gate check ($0)
+run-name: Approve gate check (${{ github.event_name == 'workflow_dispatch' && inputs.target || 'test' }})
+
+# Proves the paid-runs Approve gate on GitHub without spending anything (KAN-282). No job here calls a model, starts a
+# machine or checks out code; every check prints a length at most, never a secret value.
+#
+# Test mode (the label `gate-dryrun` on a PR from this repo, or a manual start with target test) uses two throwaway
+# environments Vickey creates: `dryrun-gate` (required reviewer Vickey, no branch rule, secret DRYRUN_KEY with any dummy
+# value) and `dryrun-main-only` (required reviewer Vickey, deployment branches: main only, secret DRYRUN_KEY). It shows
+# that a job waits for Approve, that a caller must pass an environment secret by name, that a job outside the
+# environment gets nothing, and that the branch rule refuses a run from a branch.
+#
+# Real mode (a manual start with target real, on main only, after the setup in docs/osworld-runner.md) calls the real
+# grounding and OSWorld workflows with dry_run true: they wait for Approve on paid-runs and check their keys, then stop
+# before any model call or machine start.
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "test: the throwaway environments; real: the paid-runs environment (main only)"
+        type: choice
+        options: [test, real]
+        default: test
+
+permissions:
+  contents: read
+
+jobs:
+  # ---- test mode ----
+  direct:
+    name: Direct (waits for Approve, key present)
+    if: ${{ (github.event_name == 'pull_request' && github.event.label.name == 'gate-dryrun' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.target == 'test') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: dryrun-gate
+    steps:
+      - name: Check the key
+        env:
+          DRYRUN_KEY: ${{ secrets.DRYRUN_KEY }}
+        run: |
+          if [ -z "$DRYRUN_KEY" ]; then echo "::error::DRYRUN_KEY is empty."; exit 1; fi
+          echo "key present (${#DRYRUN_KEY} chars)"
+
+  by-name:
+    name: Called, key passed by name
+    if: ${{ (github.event_name == 'pull_request' && github.event.label.name == 'gate-dryrun' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.target == 'test') }}
+    uses: ./.github/workflows/gate-dryrun-called.yml
+    with:
+      environment: dryrun-gate
+      expect: present
+    secrets:
+      DRYRUN_KEY: ${{ secrets.DRYRUN_KEY }}
+
+  not-passed:
+    name: Called, key not passed (arrives empty)
+    if: ${{ (github.event_name == 'pull_request' && github.event.label.name == 'gate-dryrun' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.target == 'test') }}
+    uses: ./.github/workflows/gate-dryrun-called.yml
+    with:
+      environment: dryrun-gate
+      expect: empty
+
+  no-env:
+    name: No environment (key empty)
+    if: ${{ (github.event_name == 'pull_request' && github.event.label.name == 'gate-dryrun' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.target == 'test') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check that a job outside the environment gets nothing
+        env:
+          DRYRUN_KEY: ${{ secrets.DRYRUN_KEY }}
+        run: |
+          if [ -n "$DRYRUN_KEY" ]; then echo "::error::DRYRUN_KEY reached a job without the environment."; exit 1; fi
+          echo "key empty, as expected"
+
+  main-only:
+    name: Main-only environment (must be refused from a branch)
+    # On main the branch rule lets it through, so it only runs from a branch or a PR.
+    if: ${{ github.ref != 'refs/heads/main' && ((github.event_name == 'pull_request' && github.event.label.name == 'gate-dryrun' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'workflow_dispatch' && inputs.target == 'test')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: dryrun-main-only
+    steps:
+      - name: Fail, the branch rule should have refused this job
+        run: |
+          echo "::error::dryrun-main-only should have refused this run from a branch."
+          exit 1
+
+  report:
+    name: Test mode report
+    needs: [direct, by-name, not-passed, no-env, main-only]
+    if: ${{ always() && (needs.direct.result != 'skipped' || needs.main-only.result != 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DIRECT: ${{ needs.direct.result }}
+      BY_NAME: ${{ needs.by-name.result }}
+      NOT_PASSED: ${{ needs.not-passed.result }}
+      NO_ENV: ${{ needs.no-env.result }}
+      MAIN_ONLY: ${{ needs.main-only.result }}
+    steps:
+      - name: Report
+        run: |
+          {
+            echo "## Approve gate check (test mode)"
+            echo "| Job | Expected | Result |"
+            echo "| --- | --- | --- |"
+            echo "| direct | success after Approve | $DIRECT |"
+            echo "| by-name | success after Approve | $BY_NAME |"
+            echo "| not-passed | success after Approve | $NOT_PASSED |"
+            echo "| no-env | success | $NO_ENV |"
+            echo "| main-only | refused (not success) | $MAIN_ONLY |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          ok=true
+          for r in "$DIRECT" "$BY_NAME" "$NOT_PASSED" "$NO_ENV"; do [ "$r" = "success" ] || ok=false; done
+          [ "$MAIN_ONLY" != "success" ] || ok=false
+          if [ "$ok" != "true" ]; then echo "::error::The gate did not behave as expected, see the summary."; exit 1; fi
+
+  # ---- real mode (main only, after the setup) ----
+  real-grounding:
+    name: Real grounding workflow, dry run
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.target == 'real' && github.ref == 'refs/heads/main' }}
+    uses: ./.github/workflows/grounding.yml
+    with:
+      dry_run: "true"
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+  real-osworld:
+    name: Real OSWorld workflow, dry run
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.target == 'real' && github.ref == 'refs/heads/main' }}
+    # The called workflow's publish-videos job asks for contents: write and actions: read (it is skipped in a dry
+    # run, but a caller must still grant them), as in benchmark.yml.
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    uses: ./.github/workflows/osworld-bench.yml
+    with:
+      limit: "1"
+      dry_run: "true"
+      publish_videos: "false"
+    secrets:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      RUNNER_ADMIN_TOKEN: ${{ secrets.RUNNER_ADMIN_TOKEN }}
+
+  # Asserts the model key does not reach a job outside the paid-runs environment, which shows the repo secrets are deleted.
+  real-no-env:
+    name: No environment (model key empty)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.target == 'real' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check that a job outside paid-runs gets no model key
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY still reaches a job without the paid-runs environment: delete the repo secret."; exit 1
+          fi
+          echo "key empty, as expected"
+
+  real-report:
+    name: Real mode report
+    needs: [real-grounding, real-osworld, real-no-env]
+    if: ${{ always() && (needs.real-grounding.result != 'skipped' || needs.real-osworld.result != 'skipped' || needs.real-no-env.result != 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GROUNDING: ${{ needs.real-grounding.result }}
+      OSWORLD: ${{ needs.real-osworld.result }}
+      NO_ENV: ${{ needs.real-no-env.result }}
+    steps:
+      - name: Report
+        run: |
+          {
+            echo "## Approve gate check (real mode)"
+            echo "| Job | Expected | Result |"
+            echo "| --- | --- | --- |"
+            echo "| real-grounding | success after Approve | $GROUNDING |"
+            echo "| real-osworld | success after Approve (the VM is never started) | $OSWORLD |"
+            echo "| real-no-env | success | $NO_ENV |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          ok=true
+          for r in "$GROUNDING" "$OSWORLD" "$NO_ENV"; do [ "$r" = "success" ] || ok=false; done
+          if [ "$ok" != "true" ]; then echo "::error::The gate did not behave as expected, see the summary."; exit 1; fi

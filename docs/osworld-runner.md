@@ -98,9 +98,16 @@ merge, then step 7.
 5. Deployment branches and tags: Selected branches and tags, `main` only.
 6. Add `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` as environment secrets.
 7. After the merge, delete the three repo secrets: while they exist, any job without the environment can read them.
-8. Check it once: start one small click-accuracy (grounding) run by hand, see it show "Waiting for review" and the GitHub
-   email arrive, then press Reject (nothing is spent when rejected). A Reject ends the run as failed, so the "benchmark run failed"
-   Slack alert may fire; that is expected.
+8. Check the gate at $0 with `gate-dryrun.yml` ("Approve gate check"). No model call, no machine start, no checkout.
+   - Before the merge: create the test environments `dryrun-gate` (required reviewer Vickey, no branch rule, secret
+     `DRYRUN_KEY` with any dummy value) and `dryrun-main-only` (required reviewer Vickey, deployment branches `main`
+     only, secret `DRYRUN_KEY`). Add the label `gate-dryrun` to the PR. Approve the jobs `direct`, `by-name` and
+     `not-passed`; `main-only` must be refused by its branch rule. The report job turns green when all of that held.
+   - After the merge and step 7: start "Approve gate check" by hand with target `real`. Approve the waiting jobs. It
+     runs the real grounding and OSWorld workflows with `dry_run` true (they check their keys, then stop) and checks that
+     a job outside `paid-runs` gets no model key, which shows the repo secrets are gone.
+
+   Rejecting a waiting run ends it as failed, so the "benchmark run failed" Slack alert may fire; that is expected.
 
 The first real approved run (with Vickey's OK for its cost) should go through the paid-run workflow (`benchmark.yml`)
 and confirm the "Check the secrets" step passes, which shows the keys arrive. A run left waiting holds its queue for

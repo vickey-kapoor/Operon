@@ -43,6 +43,11 @@ on:
         type: choice
         default: "off"
         options: ["off", "on"]
+      dry_run:
+        description: "Check the keys and stop: no VM start, no model call (KAN-282 gate check)"
+        type: choice
+        default: "false"
+        options: ["false", "true"]
   # Called by benchmark.yml for an osworld batch cell (KAN-184).
   workflow_call:
     inputs:
@@ -58,6 +63,8 @@ on:
       artifact_suffix: {type: string, default: ""}
       # benchmark.yml keeps the videos of all its cells in one release itself, so it passes "false".
       publish_videos: {type: string, default: "true"}
+      # "true": check the keys and stop before the VM starts (KAN-282 gate check; gate-dryrun.yml).
+      dry_run: {type: string, default: "false"}
     secrets:
       # The caller passes the model keys by name; the values come from the paid-runs environment of the jobs below
       # (empty for a job without that environment once the repo secrets are deleted).
@@ -115,11 +122,14 @@ jobs:
           if [ -n "$missing" ]; then
             echo "::error::Missing from the paid-runs environment:$missing."; exit 1
           fi
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Every step below the key check is skipped in a dry run: nothing signs in to Google or starts the VM.
+      - if: inputs.dry_run != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Size the bench job's timeout
+        if: inputs.dry_run != 'true'
         id: minutes
         run: |
           case "$LIMIT" in (*[!0-9]*) echo "::error::limit must be a whole number"; exit 1;; esac
@@ -132,21 +142,26 @@ jobs:
       # A label only this run's one-job runner has. run_id and run_attempt belong to the caller when this is a
       # batch cell, so several cells share them and the id is public: the random part keeps cells apart and unguessable.
       - name: Pick this run's runner label
+        if: inputs.dry_run != 'true'
         id: label
         run: echo "label=operon-osworld-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$(openssl rand -hex 6)" >> "$GITHUB_OUTPUT"
       # OIDC sign-in to Google Cloud (workload identity federation, infra/gcp): no key exists. The identity may only
       # start, stop and hand a runner script to this one VM, and only jobs of this file on main get it.
-      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+      - if: inputs.dry_run != 'true'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
       # A runner script a cancelled run left on the VM must not run when it boots.
       - name: Clear a runner script left from an earlier run
+        if: inputs.dry_run != 'true'
         run: gcloud compute instances remove-metadata "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT" --keys operon-jit-script
       - name: Start the VM
+        if: inputs.dry_run != 'true'
         run: gcloud compute instances start "$VM_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT"
       # Mint a runner that takes exactly this run's bench job and hand it to the VM through its metadata; retire the old lasting one.
       - name: Start a one-job runner on the VM
+        if: inputs.dry_run != 'true'
         # The token is on this step only, not on the checkout and sign-in actions.
         env:
           RUNNER_LABEL: ${{ steps.label.outputs.label }}
@@ -160,11 +175,15 @@ jobs:
             exit 1
           fi
           bash scripts/bench-runners/jit-runner.sh start linux "$RUNNER_LABEL" operon-osworld
+      - name: "Dry run: keys checked, nothing started"
+        if: inputs.dry_run == 'true'
+        run: |
+          echo "Dry run: the model keys are present in the paid-runs environment; the VM was not started and no model was called." >> "$GITHUB_STEP_SUMMARY"
 
   bench:
     name: Run the OSWorld tasks
     needs: start-vm
-    if: ${{ !cancelled() && needs.start-vm.result == 'success' }}
+    if: ${{ !cancelled() && needs.start-vm.result == 'success' && inputs.dry_run != 'true' }}
     # The one-job runner start-vm put on operon-osworld (docs/osworld-runner.md), under this run's own label.
     runs-on: ${{ needs.start-vm.outputs.runner_label }}
     # 30 min setup + 35 min a task (start-vm sizes it); the fallback is the 25-task worst case.
@@ -250,7 +269,7 @@ jobs:
     name: Stop the Google Cloud VM
     needs: [start-vm, bench]
     # Also after a failed start-vm: it can fail once the VM is already up (the runner step) and the VM must not keep billing.
-    if: ${{ always() && needs.start-vm.result != 'skipped' }}
+    if: ${{ always() && needs.start-vm.result != 'skipped' && inputs.dry_run != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

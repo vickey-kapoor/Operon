@@ -23,7 +23,14 @@ KEY_REF = re.compile(
     re.IGNORECASE,
 )
 # No caller can start these two jobs, and another story deletes them, so they are exempt until then.
-EXEMPT_JOBS = {("live-bench.yml", "bench"), ("live-desktop-bench.yml", "bench")}
+LIVE_BENCH_FILES = {"live-bench.yml", "live-desktop-bench.yml"}
+EXEMPT_JOBS = {
+    ("live-bench.yml", "bench"),
+    ("live-desktop-bench.yml", "bench"),
+    # Reads GEMINI_API_KEY on purpose, with no environment, and fails if it is non-empty: it proves the repo secret
+    # is deleted (test_gate_dryrun.py checks it does nothing else with the key).
+    ("gate-dryrun.yml", "real-no-env"),
+}
 
 
 def _workflows() -> dict[str, dict]:
@@ -71,14 +78,14 @@ def test_a_workflow_level_key_read_needs_the_environment_on_every_job() -> None:
 
 def test_the_exempt_live_benches_can_only_be_called_and_nobody_calls_them() -> None:
     workflows = _workflows()
-    for file in {f for f, _ in EXEMPT_JOBS}:
+    for file in LIVE_BENCH_FILES:
         triggers = workflows[file].get("on", workflows[file].get(True))  # YAML reads a bare `on` as True
         assert set(triggers) == {"workflow_call"}, f"{file} can be started on its own"
     callers = [
         f"{name}:{job_id}"
         for name, wf in workflows.items()
         for job_id, job in wf["jobs"].items()
-        if any(str(job.get("uses", "")).endswith(f) for f, _ in EXEMPT_JOBS)
+        if any(str(job.get("uses", "")).endswith(f) for f in LIVE_BENCH_FILES)
     ]
     assert not callers, f"workflows call an exempt live bench: {callers}"
 

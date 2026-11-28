@@ -67,7 +67,7 @@ def test_start_vm_signs_in_to_google_cloud_and_starts_the_vm_before_the_runner()
 
 def test_stop_vm_always_stops_the_vm_and_clears_the_runner_script() -> None:
     job = _osworld()["jobs"]["stop-vm"]
-    assert job["if"] == "${{ always() && needs.start-vm.result != 'skipped' }}"
+    assert job["if"] == "${{ always() && needs.start-vm.result != 'skipped' && inputs.dry_run != 'true' }}"
     assert job["permissions"] == {"contents": "read", "id-token": "write"}
     assert _uses(job)[0] == GCP_AUTH  # sign in first, before anything that could fail
     runs = [step.get("run", "") for step in job["steps"]]

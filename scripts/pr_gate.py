@@ -505,14 +505,22 @@ def _strip_comments(line: str, in_comment: bool) -> tuple[str, bool]:
             out, line, in_comment = out + line[:start], line[start + 4 :], True
 
 
+# Other places the scan stops (outside HTML comments): a raw HTML tag (an autolink such as <https://x> is fine) and a
+# blockquote (after spaces and list markers), which can swallow a following line.
+_HTML_TAG_RE = re.compile(r"<(?:/|(?![A-Za-z][A-Za-z0-9+.-]{1,31}:)[A-Za-z])")
+_QUOTE_START_RE = re.compile(r"^(?:[ \t]|[-*+](?=[ \t])|\d{1,9}[.)](?=[ \t]))*>")
+
+
 def has_real_check(body: str | None) -> bool:
     """Whether a PR description has a "Real check:" line with a link on the same line (KAN-298).
 
     The line must be a top-level line (column 0, no quote, at most one list marker and one heading mark before the
-    words) and must come before any code block. Fail closed by construction: lines are split on CR, LF or CRLF only,
-    HTML comments (may span lines, an unclosed one runs to the end) never count, and the scan stops at the first
-    fence-like line (``` or ~~~ after any spaces, quote marks and list markers, even inside a comment), so nothing
-    after it counts. This is not a Markdown parser.
+    words), must match as written (a comment before the words does not count), and must come before any code block,
+    quote or HTML. Fail closed by construction: lines are split on CR, LF or CRLF only, HTML comments (may span lines,
+    an unclosed one runs to the end) never count, and the scan stops, so that line and everything after it cannot
+    count, at the first line that is fence-like (``` or ~~~ after any spaces, quote marks and list markers, even inside
+    a comment) or, outside comments, has a raw HTML tag, starts with a quote mark, or leaves an inline code span open
+    (an odd number of backticks). This is not a Markdown parser.
     """
     if not isinstance(body, str):
         return False
@@ -521,10 +529,11 @@ def has_real_check(body: str | None) -> bool:
         if _FENCE_LIKE_RE.match(raw):
             return False
         line, in_comment = _strip_comments(raw, in_comment)
-        if _FENCE_LIKE_RE.match(line):
+        if _FENCE_LIKE_RE.match(line) or _HTML_TAG_RE.search(line) or _QUOTE_START_RE.match(line) or line.count("`") % 2:
             return False
+        m_raw = _REAL_CHECK_LINE_RE.match(raw)
         m = _REAL_CHECK_LINE_RE.match(line)
-        if m and _LINK_RE.search(m.group("rest")):
+        if m_raw and m and _LINK_RE.search(m.group("rest")):
             return True
     return False
 

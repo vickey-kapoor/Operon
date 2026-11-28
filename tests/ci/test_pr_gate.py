@@ -1182,7 +1182,7 @@ def test_sweep_notes_a_missing_real_check_once_per_head_and_never_merges_it() ->
     assert "operon-gate-real-check: $sha" in branch
     assert "github-actions[bot]" in branch and "contains($m)" in branch  # dedupe on the bot and the head sha
     assert "--body-file" in branch and "gh pr comment" in branch
-    assert "put it on its own top-level line, before any code block" in branch
+    assert "put it on its own top-level line, before any code block, quote or HTML" in branch
     assert branch.index('"$(pause_state)"') < branch.index("gh pr comment")
     assert "gh pr merge" not in branch and "--add-label" not in branch
     assert "\n    continue\n" in branch
@@ -1222,4 +1222,30 @@ def test_real_check_html_comments_and_line_breaks() -> None:
     assert gate.has_real_check(f"intro\r\n{line}") and gate.has_real_check(f"intro\r{line}")
     for sep in ("\x0b", "\x0c", "\x85", "\u2028", "\u2029"):
         assert not gate.has_real_check(f"intro{sep}{line}"), repr(sep)  # not a line break: still one line
+
+
+def test_real_check_stops_at_html_quotes_and_open_code_spans() -> None:
+    line = f"Real check: {RC_LINK}"
+    for before in (
+        "<pre>",
+        "<details>",
+        "<div hidden>",
+        '<img alt="',
+        "</p>",
+        "> quote",
+        "- > quote",
+        "text with `an open span",
+        "x ``` y",
+    ):
+        assert not gate.has_real_check(f"{before}\n{line}"), before
+    assert not gate.has_real_check(f'<img alt="\n{line}\n">')  # the tag spans two lines
+    assert not gate.has_real_check(f"> lazy\n{line}")  # a lazy blockquote continuation
+    assert not gate.has_real_check(f"`two-line\n{line}\nspan`")
+    assert not gate.has_real_check(f"<!-- x -->{line}")  # a comment before the words: not as written
+    assert not gate.has_real_check(f"Real check: <!-- {RC_LINK} -->")  # the link is only in a comment
+    # Things before it that must not stop the scan.
+    assert gate.has_real_check(f"See <https://example.com/x> and <http://a.b>\n{line}")
+    assert gate.has_real_check(f"Uses `code` and <!-- <pre> -->\n{line}")
+    assert gate.has_real_check(f"{line} <!-- trailing note -->")
+    assert gate.has_real_check(f"{line}\n<pre>")  # after the line, anything goes
 

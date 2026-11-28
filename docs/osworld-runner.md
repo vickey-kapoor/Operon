@@ -99,7 +99,8 @@ merge, then step 7.
 6. Add `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` as environment secrets.
 7. After the merge, delete the three repo secrets: while they exist, any job without the environment can read them.
 8. Check it once: start one small click-accuracy (grounding) run by hand, see it show "Waiting for review" and the GitHub
-   email arrive, then press Reject (nothing is spent when rejected).
+   email arrive, then press Reject (nothing is spent when rejected). A Reject ends the run as failed, so the "benchmark run failed"
+   Slack alert may fire; that is expected.
 
 The first real approved run (with Vickey's OK for its cost) should go through the paid-run workflow (`benchmark.yml`)
 and confirm the "Check the secrets" step passes, which shows the keys arrive. A run left waiting holds its queue for

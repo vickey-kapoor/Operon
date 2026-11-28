@@ -99,6 +99,33 @@ def _is_caller(job: dict) -> bool:
     return "uses" in job
 
 
+@pytest.mark.parametrize("callee", ["grounding.yml", "osworld-bench.yml"])
+def test_every_caller_of_a_paid_workflow_passes_the_gemini_key(callee: str) -> None:
+    # A dropped key reaches the called job as an empty string, so the run would fail late (or after the VM started).
+    callers = [
+        f"{name}:{job_id}"
+        for name, wf in _workflows().items()
+        for job_id, job in wf["jobs"].items()
+        if str(job.get("uses", "")).endswith(f"/{callee}") and "GEMINI_API_KEY" not in (job.get("secrets") or {})
+    ]
+    assert not callers, f"callers of {callee} that do not pass GEMINI_API_KEY: {callers}"
+
+
+def test_start_vm_checks_the_model_keys_before_anything_that_costs_money() -> None:
+    steps = _workflows()["osworld-bench.yml"]["jobs"]["start-vm"]["steps"]
+    check = next(i for i, s in enumerate(steps) if "secrets.GEMINI_API_KEY" in json.dumps(s))
+    step = steps[check]
+    assert check == 0  # the first step
+    assert "exit 1" in step["run"] and '-z "$GEMINI_API_KEY"' in step["run"]
+    # The provider's key is checked too, with the same gating as the bench job, so no other key reaches the step.
+    assert step["env"]["ANTHROPIC_API_KEY"] == "${{ startsWith(inputs.model, 'claude') && secrets.ANTHROPIC_API_KEY || '' }}"
+    assert step["env"]["OPENAI_API_KEY"] == "${{ startsWith(inputs.model, 'openai') && secrets.OPENAI_API_KEY || '' }}"
+    assert '-z "$ANTHROPIC_API_KEY"' in step["run"] and '-z "$OPENAI_API_KEY"' in step["run"]
+    auth = next(i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("google-github-actions/auth@"))
+    start = next(i for i, s in enumerate(steps) if s.get("name") == "Start the VM")
+    assert check < auth < start
+
+
 def test_no_caller_inherits_secrets() -> None:
     bad = [
         f"{name}:{job_id}"

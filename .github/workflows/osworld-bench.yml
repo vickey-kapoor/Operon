@@ -97,13 +97,23 @@ jobs:
       bench_minutes: ${{ steps.minutes.outputs.minutes }}
       runner_label: ${{ steps.label.outputs.label }}
     steps:
-      # An empty key fails here, before the VM starts and bills. The key is in this step's env only.
+      # An empty key fails here, before the VM starts and bills. The keys are in this step's env only, and a provider's
+      # key is there only when the run uses that provider's model (the same gating as the bench job).
       - name: Check the model key
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ startsWith(inputs.model, 'claude') && secrets.ANTHROPIC_API_KEY || '' }}
+          OPENAI_API_KEY: ${{ startsWith(inputs.model, 'openai') && secrets.OPENAI_API_KEY || '' }}
+          MODEL: ${{ inputs.model }}
         run: |
-          if [ -z "$GEMINI_API_KEY" ]; then
-            echo "::error::GEMINI_API_KEY is missing from the paid-runs environment."; exit 1
+          missing=""
+          if [ -z "$GEMINI_API_KEY" ]; then missing="GEMINI_API_KEY"; fi
+          case "$MODEL" in
+            claude*) if [ -z "$ANTHROPIC_API_KEY" ]; then missing="$missing ANTHROPIC_API_KEY"; fi;;
+            openai*) if [ -z "$OPENAI_API_KEY" ]; then missing="$missing OPENAI_API_KEY"; fi;;
+          esac
+          if [ -n "$missing" ]; then
+            echo "::error::Missing from the paid-runs environment:$missing."; exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

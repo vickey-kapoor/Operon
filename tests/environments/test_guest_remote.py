@@ -335,3 +335,61 @@ def test_guest_executor_carries_the_tools_the_host_asked_for(monkeypatch):
     assert isinstance(wrapped, ToolExecutor) and wrapped.inner == "x11"
     monkeypatch.setenv("OPERON_TOOLS", "off")
     assert guest_mod.build_guest_executor() == "x11"
+
+
+# ── the fresh look's extra screenshot (KAN-267) ─────────────────
+
+
+class PeekingGuestExecutor(FakeGuestExecutor):
+    """A guest executor that has peek_frame, like DesktopExecutor."""
+
+    async def peek_frame(self) -> CaptureFrame | None:
+        path = self.tmp / "guest_peek.png"
+        path.write_bytes(PNG + b"peek")
+        return CaptureFrame(artifact_path=str(path), width=1280, height=800, monitor_left=5, monitor_top=7)
+
+
+def test_peek_brings_the_guest_frame_to_a_host_file(tmp_path):
+    guest = PeekingGuestExecutor(tmp_path)
+    transport = httpx.ASGITransport(app=create_guest_app(guest, TOKEN))
+    remote = RemoteDesktopExecutor("http://guest", TOKEN, artifact_dir=tmp_path / "host", transport=transport)
+    frame = asyncio.run(remote.peek_frame())
+    assert frame is not None
+    local = Path(frame.artifact_path)
+    assert local.parent == tmp_path / "host"
+    assert local.read_bytes() == PNG + b"peek"
+    assert (frame.width, frame.height, frame.monitor_left, frame.monitor_top) == (1280, 800, 5, 7)
+    assert not (tmp_path / "guest_peek.png").exists()
+
+
+def test_peek_is_none_when_the_guest_executor_has_no_peek_frame(remote):
+    assert asyncio.run(remote.peek_frame()) is None
+
+
+def test_peek_needs_the_token(tmp_path):
+    client = TestClient(create_guest_app(PeekingGuestExecutor(tmp_path), TOKEN))
+    assert client.post("/peek").status_code == 401
+    assert client.post("/peek", headers={"Authorization": "Bearer nope"}).status_code == 401
+    assert client.post("/peek", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 200
+
+
+def test_peek_is_none_from_an_older_guest_without_the_route(tmp_path):
+    transport = httpx.MockTransport(lambda request: httpx.Response(404))
+    remote = RemoteDesktopExecutor("http://guest", TOKEN, artifact_dir=tmp_path, transport=transport)
+    assert asyncio.run(remote.peek_frame()) is None
+
+
+def test_peek_server_error_raises(tmp_path):
+    transport = httpx.MockTransport(lambda request: httpx.Response(500))
+    remote = RemoteDesktopExecutor("http://guest", TOKEN, artifact_dir=tmp_path, transport=transport)
+    with pytest.raises(httpx.HTTPStatusError):
+        asyncio.run(remote.peek_frame())
+
+
+def test_peek_frame_is_a_coroutine_function_on_the_remote_and_osworld_executors():
+    import inspect
+
+    from operon.environments.osworld import OSWorldExecutor
+
+    assert inspect.iscoroutinefunction(RemoteDesktopExecutor.peek_frame)
+    assert inspect.iscoroutinefunction(OSWorldExecutor.peek_frame)

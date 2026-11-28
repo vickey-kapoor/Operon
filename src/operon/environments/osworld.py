@@ -51,6 +51,39 @@ def _key(name: str) -> str:
     return _KEY_ALIASES.get(low, low)
 
 
+# Runs on the OSWorld VM inside `python3 -c` (pyautogui is already imported). Imports come first,
+# so a VM without python-xlib or an X display raises before anything is typed.
+_UNICODE_TYPER = """\
+def _operon_type(text):
+    import re
+    import time
+    from Xlib import X, display
+    from Xlib.ext import xtest
+    d = display.Display()
+    lo, hi = d.display.info.min_keycode, d.display.info.max_keycode
+    table = d.get_keyboard_mapping(lo, hi - lo + 1)
+    spare = [lo + i for i, row in enumerate(table) if not any(row)]
+    kc = spare[0] if spare else hi
+    saved = list(table[kc - lo])
+    try:
+        for run in re.findall(r"[\\x00-\\x7f]+|[^\\x00-\\x7f]", text):
+            if run.isascii():
+                pyautogui.write(run, interval=0.02)
+                continue
+            cp = ord(run)
+            keysym = cp if 0xA0 <= cp <= 0xFF else 0x01000000 + cp
+            d.change_keyboard_mapping(kc, [(keysym,) * len(saved)])
+            d.sync()
+            time.sleep(0.05)
+            xtest.fake_input(d, X.KeyPress, kc)
+            xtest.fake_input(d, X.KeyRelease, kc)
+            d.sync()
+    finally:
+        d.change_keyboard_mapping(kc, [tuple(saved)])
+        d.sync()
+"""
+
+
 def pyautogui_snippet(action: AgentAction) -> str | None:
     """The pyautogui statements for one action, or None when it needs no input."""
     t = action.action_type
@@ -76,12 +109,10 @@ def pyautogui_snippet(action: AgentAction) -> str | None:
         if text.isascii():
             lines.append(f"pyautogui.write({text!r}, interval=0.02)")
         else:
-            # pyautogui.write drops characters X11 has no key for (cafe-with-accent -> caf):
-            # paste through the VM's clipboard instead, typing only if pyperclip is missing.
-            lines.append(
-                f"try:\n    import pyperclip; pyperclip.copy({text!r}); pyautogui.hotkey('ctrl', 'v')\n"
-                f"except Exception:\n    pyautogui.write({text!r}, interval=0.02)"
-            )
+            # pyautogui.write drops characters X11 has no key for (en dash, curly quotes, accents).
+            # Type them with XTest on a temporarily remapped keycode (what `xdotool type` does):
+            # no clipboard, and no fallback, so a VM that cannot do it fails the step.
+            lines.append(_UNICODE_TYPER + f"_operon_type({text!r})")
         if action.press_enter:
             lines.append("pyautogui.press('enter')")
         return "\n".join(lines)
@@ -244,7 +275,7 @@ class OSWorldExecutor:
                 if secret_values and not secret_endpoint_ok(self.base_url, self._trusted_host):
                     return _failed(action, "type failed: the OSWorld VM is not at a loopback address"), False
                 if secret_values and not resolved.isascii():
-                    # Non-ASCII text is pasted through the VM's clipboard: a secret never is.
+                    # Non-ASCII text goes through a remapped keycode, not pyautogui.write: keep a secret out of it.
                     return _failed(action, "type failed: this secret has a character that cannot be typed without the clipboard"), False
                 to_type = action.model_copy(update={"text": resolved})
             snippet = pyautogui_snippet(to_type)

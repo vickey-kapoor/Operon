@@ -187,6 +187,7 @@ its lesson here, or, if code can check it, a guard in `tests/test_invariants.py`
 - A changed default (no Win+D on your own PC) silently took the clean screen from the live desktop benchmarks -> when a default changes, find every caller that relied on the old one and make it ask explicitly (KAN-205, #379).
 - A Google workload identity mapping read an OIDC claim (`job_workflow_ref`) that a directly started run may not carry -> map an optional claim as `"claim" in assertion ? assertion.claim : <fallback>`, and check a direct start and a called run both sign in at apply (KAN-224, #386).
 - The pipeline skill was named here but never committed, so cloud story threads planned and coded everything in one Opus session (PRs 369-386) -> the skill lives in `.claude/skills/pipeline/` and every PR body records who did each step (#387, 2026-11-27).
+- A reusable workflow's job with `environment:` got an empty key because the caller didn't pass it -> callers pass environment secrets by name (never `secrets: inherit`) (KAN-282, #391) [guarded: `test_every_caller_of_a_paid_workflow_passes_the_gemini_key`, `test_no_caller_inherits_secrets`].
 
 ## Dev workflow (Opus plans, Haiku scans, Sonnet codes, Opus verifies)
 
@@ -233,7 +234,12 @@ full rule; AGENTS.md and docs/CLAUDE-CODE-REFERENCE.md point here.
 - **No paid run without Vickey's explicit OK for that run and its cost:** no `/bench` comment, no manual start of
   `benchmark.yml`, `grounding.yml` or `osworld-bench.yml`, no local run with a real model key, and no PR whose own CI
   would use a model key. Approval is per PR and per run: an earlier "merge", a "yes" to another question, a green check,
-  a clean Codex review or a reviewer PASS do not count.
+  a clean Codex review or a reviewer PASS do not count. Every paid job runs in the `paid-runs` environment and waits for
+  Vickey's Approve in GitHub (KAN-282); an agent never approves a waiting `paid-runs` run (no pending_deployments call, no
+  bypass), even with her OK for the run. Agents act as Vickey's account, so the Approve button is a hard stop against a
+  run starting by accident and a notification to her, but an agent's token could still approve through the API; the
+  no-approve rule is what stops that. An agent never changes the `paid-runs` environment (reviewers, branch rule, bypass,
+  secrets) and never adds a model key as a repo secret.
 - Marker comments come from the same account that opens PRs, so they are only as trustworthy as the review behind them.
   Gate merges use `GITHUB_TOKEN`, so push-triggered CI on `main` does not run for them.
 

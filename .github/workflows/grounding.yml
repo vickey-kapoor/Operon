@@ -23,6 +23,11 @@ on:
         type: choice
         options: ["off", "dense", "always"]
         default: "off"
+      dry_run:
+        description: "Check the key and stop: no checkout of evaluated code, no model call (KAN-282 gate check)"
+        type: choice
+        options: ["false", "true"]
+        default: "false"
   # Called by benchmark.yml for /bench grounding.
   workflow_call:
     inputs:
@@ -30,6 +35,8 @@ on:
       per_set: {type: string, default: "100"}
       max_cost_usd: {type: string, default: "5"}
       zoom: {type: string, default: "off"}
+      # "true": check the key and stop (KAN-282 gate check; gate-dryrun.yml).
+      dry_run: {type: string, default: "false"}
       # Set by the paid-run workflow (benchmark.yml) so its cells' artifacts do not share a name.
       artifact_suffix: {type: string, default: ""}
       ref:
@@ -37,6 +44,8 @@ on:
         type: string
         default: ""
     secrets:
+      # The caller passes the key by name; the value comes from the paid-runs environment of the job below
+      # (empty for a job without that environment once the repo secrets are deleted).
       GEMINI_API_KEY: {required: false}
 
 permissions:
@@ -46,7 +55,12 @@ jobs:
   grounding:
     name: Run the click-accuracy test
     runs-on: ubuntu-latest
+    # A dry run (KAN-282 gate check) runs the separate dry-run job below instead.
+    if: ${{ inputs.dry_run != 'true' }}
     timeout-minutes: 60
+    # Every run waits for Vickey's Approve (KAN-282). GEMINI_API_KEY is a secret of this environment; the caller
+    # passes it by name (reusable workflows need that), and the environment's value is what the job reads.
+    environment: paid-runs
     env:
       UV_PYTHON: "3.14"
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -55,7 +69,7 @@ jobs:
       - name: Check the secrets
         run: |
           if [ -z "$GEMINI_API_KEY" ]; then
-            echo "::error::Missing repository secret GEMINI_API_KEY."; exit 1
+            echo "::error::GEMINI_API_KEY is missing from the paid-runs environment."; exit 1
           fi
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -99,3 +113,21 @@ jobs:
             .var/bench/grounding-*.json
           if-no-files-found: ignore
           retention-days: 14
+
+  # The gate check: waits for Approve on paid-runs, checks the key arrived, and stops. It checks out nothing, installs
+  # nothing and calls no model; it prints no value. Its own job, so the real job's steps carry no dry-run conditions.
+  dry-run:
+    name: Dry run, check the key only
+    if: ${{ inputs.dry_run == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: paid-runs
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - name: Check the key and stop
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY is missing from the paid-runs environment."; exit 1
+          fi
+          echo "Dry run: key present, nothing run" >> "$GITHUB_STEP_SUMMARY"

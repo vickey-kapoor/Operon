@@ -195,7 +195,9 @@ jobs:
       per_set: ${{ matrix.per_set }}
       max_cost_usd: ${{ matrix.cap }}
       artifact_suffix: ${{ matrix.suffix }}
-    # Named, not inherited: the benchmarked code never sees the dashboard, Blob, Slack or Azure secrets.
+    # Named, never inherited: the benchmarked code never sees the dashboard, Blob, Slack or Azure secrets. The key is
+    # passed by name (a reusable workflow gets an empty one otherwise); its value comes from the paid-runs environment
+    # of the called job (KAN-282).
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
@@ -225,7 +227,8 @@ jobs:
       model: ${{ matrix.model }}
       done_check: ${{ matrix.done_check }}
       publish_videos: "false"  # publish-videos below keeps every cell's videos in one release
-    # Only the called workflow's bench job decides which key reaches a cell (by its model).
+    # Passed by name; the values come from the paid-runs environment of the called jobs (KAN-282). Only the called
+    # bench job decides which key reaches a cell (by its model).
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -241,6 +244,7 @@ jobs:
     with:
       ref: ${{ needs.parse.outputs.sha }}
       zoom: ${{ needs.parse.outputs.zoom }}
+    # By name; the value comes from the paid-runs environment of the called job (KAN-282).
     secrets:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 

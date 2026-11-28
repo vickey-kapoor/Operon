@@ -67,9 +67,15 @@ OSWorld app catalog. Report scores as run with those.
    `operon-osworld`. If the VM has another name or zone, set the repo variables `OSWORLD_VM_NAME` and
    `OSWORLD_GCP_ZONE` (and `GCP_PROJECT_ID` for another project).
 
-4. The repo secret `GEMINI_API_KEY` is the one the other benchmarks use. The key reaches the run
+4. The model keys `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are secrets of the `paid-runs`
+   GitHub environment (KAN-282), not repo secrets. `benchmark.yml` passes each key to the called workflow by name (a
+   reusable workflow gets an empty value otherwise); the value comes from the environment of the called job. The jobs `start-vm` and `bench` both wait for Vickey's Approve
+   on that environment, so a run needs two Approve clicks: machine start, then tasks. After the first click the
+   VM is up and its runner is registered, so the 20-minute idle power-off in `infra/gcp/startup.sh` does not fire:
+   it bills about $0.20 an hour until the second click (worst case the VM's 17 h `max_run_duration`, about $3.40).
+   Press the second Approve right away, or Reject to stop the VM. A key reaches the run
    as an environment variable of the job; it is not written to the VM's disk by the workflow.
-   A `model` run also uses the repo secret `ANTHROPIC_API_KEY` (Claude) or `OPENAI_API_KEY` (GPT); each reaches
+   A `model` run uses `ANTHROPIC_API_KEY` (Claude) or `OPENAI_API_KEY` (GPT); each reaches
    only a run of that provider's model, never a Gemini or grounding run.
 
 The first run also installs everything on the VM (`start-vm` waits up to 15 minutes for the runner), creates the
@@ -78,6 +84,68 @@ two Python environments (`~/osw-venv`, Python 3.11 with OSWorld's requirements, 
 
 The task VM OSWorld starts inside `operon-osworld` keeps OSWorld's default size (4 GB, 4 cores), so scores stay
 comparable with earlier runs. `operon-osworld` has 16 GB and an 8 GB swap file.
+
+### Paid-runs environment setup
+
+Done once in GitHub (Settings, Environments), by Vickey (KAN-282). Order: steps 1-6 BEFORE this PR merges (if it
+merges first, GitHub creates `paid-runs` on the first run with no reviewer, and the repo keys are still there), then
+merge, then step 7.
+
+1. Create the environment `paid-runs`.
+2. Required reviewers: Vickey.
+3. Untick "Allow administrators to bypass configured protection rules".
+4. Leave "Prevent self-review" off: agents start runs as her account, so it would lock her out.
+5. Deployment branches and tags: Selected branches and tags, `main` only.
+6. Add `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` as environment secrets.
+7. After the merge, delete the three repo secrets: while they exist, any job without the environment can read them.
+8. Check the gate at $0 with `gate-dryrun.yml` ("Approve gate check"). No model call, no machine start, no checkout.
+   Only Vickey adds the label and starts the real check; agents do not.
+   - Before the merge: create both test environments first, then add the label (if a job names an environment that
+     does not exist yet, GitHub creates it without protection). `dryrun-gate`: required reviewer Vickey, no branch
+     rule, secret `DRYRUN_KEY` with any dummy value. `dryrun-main-only`: required reviewer Vickey, deployment
+     branches `main` only, secret `DRYRUN_KEY`. Then add the label `gate-dryrun` to the PR and Approve `direct`,
+     `by-name` and `not-passed`.
+   - `main-only` must be refused by its branch rule, so the PR run ends with a red `main-only` job by design. Read
+     the `report` job: it is green when everything held, and its summary names who approved, with a table of every job
+     and when it started and finished. If `main-only` asks for your Approve, the branch rule is missing: Reject it, and
+     the report will fail (expected); fix the environment, then remove the label and add it again to start a new run.
+     Do not use "Re-run" on the old run: its approvals history keeps the old Reject (and an old Approve), so it stays
+     red or can show a stale approval.
+   - The red `main-only` job leaves a red check on the PR's head, so only add the label to PR #391 (on any other PR
+     the red check blocks the merge gate until a new commit).
+   - A red `not-passed` (a key arrived although it was not passed) means GitHub behaves differently from the KAN-282
+     lesson in CLAUDE.md, not that the Approve gate failed; tell Claude.
+   - After the check, keep or delete the two test environments as you like. If you delete them and add the label
+     again, GitHub recreates them unprotected and the report goes red.
+   - After the merge and step 7: start "Approve gate check" by hand with target `real`, from main, and Approve the
+     waiting jobs. It runs the OSWorld workflow's `start-vm` job with `dry_run` true (it checks the keys, then stops
+     before any sign-in or VM start) and `grounding.yml`'s separate `dry-run` job (it checks the key and stops), and checks that a job outside `paid-runs` has none of the three model keys, which shows the repo secrets
+     are gone.
+
+   What this does not prove:
+   - That the paid grounding job has the environment: real mode runs `grounding.yml`'s separate `dry-run` job, not the
+     paid `grounding` job. Only the offline test shows the paid job has `paid-runs`.
+   - How `paid-runs` itself is set up: test mode proves GitHub's mechanism on the throwaway environments.
+   - That a key is valid: the checks show it is non-empty, not that it works.
+   - The main-only rule on `paid-runs` itself (real mode runs on main, so it never meets the rule).
+   - The admin-bypass and self-review settings.
+   - The `benchmark.yml` and `/bench` paths.
+   - OSWorld's second Approve (`bench`, `stop-vm`) and the Google sign-in: a dry run stops before them.
+   - The Anthropic and OpenAI keys inside `paid-runs` (a dry run uses the default model).
+   - That an agent's token could not approve through the API: the no-approve rule covers that.
+   - That `RUNNER_ADMIN_TOKEN` (a repo secret with Administration write) cannot change the `paid-runs` settings: only the
+     no-change rule covers that.
+
+   Do not start real mode while a paid OSWorld run is queued: both use the shared VM lock, which can cancel the queued
+   one. If `main-only` is left waiting, the report never runs, so Approve or Reject every waiting job.
+
+The first real approved run (with Vickey's OK for its cost) should go through the paid-run workflow (`benchmark.yml`)
+and confirm the "Check the secrets" step passes, which shows the keys arrive. A run left waiting holds its queue for
+up to 30 days, so Reject the runs you do not want.
+
+A hand start of `grounding.yml`, `benchmark.yml` or `osworld-bench.yml` from a branch is now blocked (the environment accepts `main` only). To test a branch, use
+a batch cell `grounding ref=<branch>` or `/bench grounding` on the PR. A batch needs two Approve clicks per OSWorld cell,
+and its cells run one after another.
 
 ## When a run fails
 

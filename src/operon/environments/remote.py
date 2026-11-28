@@ -112,6 +112,23 @@ class RemoteDesktopExecutor:
             raise GuestUnavailableError("guest agent sent a frame without its image")
         return frame.model_copy(update={"artifact_path": local})
 
+    async def peek_frame(self) -> CaptureFrame | None:
+        """The fresh look's extra screenshot from the guest (KAN-267). None when the guest has
+        no ``peek_frame`` (204) or is an older guest without the route (404)."""
+        try:
+            response = await self._http().post("/peek", json={})
+        except httpx.HTTPError as exc:
+            raise GuestUnavailableError(f"guest agent at {self.base_url} did not answer /peek: {exc}") from exc
+        if response.status_code in (204, 404):
+            return None
+        response.raise_for_status()
+        data = response.json()
+        frame = CaptureFrame.model_validate(data["frame"])
+        local = self._save(data.get("png"), ".png")
+        if local is None:
+            raise GuestUnavailableError("guest agent sent a frame without its image")
+        return frame.model_copy(update={"artifact_path": local})
+
     async def execute(self, action: AgentAction) -> ExecutedAction:
         if action.action_type is ActionType.BATCH:
             return await self._execute_batch(action)

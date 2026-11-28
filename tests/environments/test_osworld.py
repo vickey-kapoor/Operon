@@ -621,3 +621,20 @@ def test_usage_gaps_reach_the_task_row_the_summary_and_the_dashboard_flag(monkey
     # The dashboard reads the same summary keys to flag the run.
     prepared = dashboard.prepare({"suite": "osworld", "summary": summary, "results": []}, {})
     assert "2 steps had no usage file and 2 usage files were unreadable" in prepared["config"]["flagged"]
+
+
+# ── the fresh look's extra screenshot (KAN-267) ─────────────────
+
+
+def test_peek_frame_is_one_screenshot_and_no_input(tmp_path):
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        return _ok_handler(request)
+
+    frame = asyncio.run(_executor(handler, tmp_path).peek_frame())
+    assert frame is not None
+    assert (frame.width, frame.height) == (400, 300)
+    assert Path(frame.artifact_path).exists()
+    assert seen == [("GET", "/screenshot")]

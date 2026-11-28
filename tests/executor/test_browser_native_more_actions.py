@@ -444,3 +444,11 @@ async def test_session_reset_never_opens_a_non_web_start_url(tmp_path: Path) -> 
     page.goto.assert_not_awaited()
     page.reload.assert_awaited_once()
     assert "not an http or https link" in executor.last_reset_actions[0]
+
+
+async def test_settle_now_forwards_min_s_to_the_change_note_buffer(tmp_path: Path) -> None:
+    """KAN-264: the first-step minimum reaches the settle wait."""
+    executor = NativeBrowserExecutor(artifact_dir=tmp_path, headless=True)
+    executor._change_notes = SimpleNamespace(settle=AsyncMock())
+    await executor.settle_now(2.5, min_s=1.0)
+    executor._change_notes.settle.assert_awaited_once_with(executor._grab_signature, 2.5, min_s=1.0)

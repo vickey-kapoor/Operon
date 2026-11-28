@@ -870,9 +870,9 @@ class DesktopExecutor(Executor):
             except Exception:
                 logger.debug("aclose: cleanup_run failed for %s", run_id, exc_info=True)
 
-    async def settle_now(self, fallback_delay: float) -> None:
+    async def settle_now(self, fallback_delay: float, *, min_s: float | None = None) -> None:
         """Wait for the screen to settle (OPERON_SETTLE_DETECT), else sleep ``fallback_delay``."""
-        await self._change_notes.settle(self._grab_signature, fallback_delay)
+        await self._change_notes.settle(self._grab_signature, fallback_delay, min_s=min_s)
 
     def pop_change_note(self) -> str | None:
         """The change notes collected since the last call (OPERON_CHANGE_NOTE), or None."""

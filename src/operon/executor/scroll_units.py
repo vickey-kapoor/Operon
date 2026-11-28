@@ -11,4 +11,4 @@ def wheel_clicks(pixels: int) -> int:
     if pixels == 0:
         return 0
     clicks = max(1, round(abs(pixels) / PIXELS_PER_NOTCH))
-    return clicks  # DRILL KAN-299: sign dropped on purpose; never merge this branch
+    return clicks if pixels > 0 else -clicks

@@ -1186,3 +1186,18 @@ def test_sweep_notes_a_missing_real_check_once_per_head_and_never_merges_it() ->
     assert branch.index('"$(pause_state)"') < branch.index("gh pr comment")
     assert "gh pr merge" not in branch and "--add-label" not in branch
     assert "\n    continue\n" in branch
+
+
+def test_real_check_inside_a_code_block_or_indented_does_not_count() -> None:
+    assert not gate.has_real_check(f"```\nReal check: {RC_LINK}\n```")
+    assert not gate.has_real_check(f"~~~\nReal check: {RC_LINK}\n~~~")
+    assert not gate.has_real_check(f"```text\nReal check: {RC_LINK}")  # unclosed fence runs to the end
+    assert not gate.has_real_check(f"    Real check: {RC_LINK}")
+    assert gate.has_real_check(f"```\ncode\n```\nReal check: {RC_LINK}")  # after the fence closes
+
+
+def test_real_check_accepts_numbered_and_plus_list_prefixes() -> None:
+    for prefix in ("1. ", "2) ", "+ ", "10. **", "- 3. "):
+        suffix = "**" if prefix.endswith("**") else ""
+        text = f"{prefix}Real check:{suffix} {RC_LINK}"
+        assert gate.has_real_check(text), text

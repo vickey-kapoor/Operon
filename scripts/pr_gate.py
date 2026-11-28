@@ -480,7 +480,8 @@ def is_fork_pr(pr: dict[str, Any]) -> bool:
 REAL_CHECK_REASON = "no 'Real check:' line with a link in the PR description"
 
 _HTML_COMMENT_RE = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
-_REAL_CHECK_LINE_RE = re.compile(r"^[ \t#>*_-]*real check[ \t]*[*_]*[ \t]*:(?P<rest>.*)$", re.IGNORECASE)
+_FENCE_RE = re.compile(r"^ {0,3}(```|~~~)")
+_REAL_CHECK_LINE_RE = re.compile(r"^ {0,3}(?:[ \t#>*_+-]|\d{1,9}[.)])*real check[ \t]*[*_]*[ \t]*:(?P<rest>.*)$", re.IGNORECASE)
 _LINK_RE = re.compile(r"https?://\S")
 
 
@@ -488,10 +489,18 @@ def has_real_check(body: str | None) -> bool:
     """Whether a PR description has a "Real check:" line with a link on the same line (KAN-298).
 
     HTML comments are removed first (an unclosed ``<!--`` runs to the end), so the template's hint never counts.
+    Fenced code blocks (an unclosed fence runs to the end) and lines indented 4 or more spaces do not count either.
+    List prefixes (``-``, ``*``, ``+``, ``1.``, ``2)``) and quote or heading marks are allowed before the words.
     """
     if not isinstance(body, str):
         return False
+    in_fence = False
     for line in _HTML_COMMENT_RE.sub("", body).splitlines():
+        if _FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence or line.startswith(("    ", "\t")):
+            continue
         m = _REAL_CHECK_LINE_RE.match(line)
         if m and _LINK_RE.search(m.group("rest")):
             return True
